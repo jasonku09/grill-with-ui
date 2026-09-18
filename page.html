@@ -143,6 +143,66 @@
   footer .hint { font-size: 12px; color: var(--ink-3); } footer .warn { font-size: 12px; color: var(--accent); }
   footer .confirm { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; }
   #finish:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); animation: none; } #finish .spin { margin-right: 4px; }
+
+  /* Narrow screens. The desktop layout is three fixed columns (260px / flexible
+     / 33vw) in a 100vh grid. At 390px the middle column is crushed and the option
+     cards fall off the right edge. Below 760px the three panes stack into one
+     scrolling page and the action bar sticks to the bottom, so there is no need to
+     switch the browser into desktop mode. Tablets (768px) keep the three columns:
+     that width already fits. */
+  @media (max-width: 760px) {
+    body { grid-template-columns: 1fr; grid-template-rows: none; height: auto; min-height: 100vh; }
+    #banner, header, nav, main, #visual, aside, footer { grid-column: 1 / -1; grid-row: auto; }
+
+    /* buttons carry white-space:nowrap; without wrapping they shove the
+       status text past the right edge */
+    header { flex-wrap: wrap; gap: 8px 12px; padding: 10px 16px; }
+    header h1 { font-size: 17px; flex-basis: 100%; }
+    header .status { margin-left: 0; }
+
+    /* the question list stays within reach without eating the screen */
+    nav { max-height: 24vh; border-right: 0; border-bottom: 1px solid var(--rule); }
+
+    /* panes join the page scroll instead of each scrolling on its own */
+    main { overflow-y: visible; padding: 20px 16px 28px; }
+    .card h2 { font-size: 22px; }
+    .opts { margin-top: 16px; }
+    .opt { padding: 12px; gap: 10px; }
+
+    aside { border-left: 0; border-top: 1px solid var(--rule); grid-template-rows: auto auto auto; }
+    aside .msgs { overflow-y: visible; }
+
+    /* "Send to Agent" must always be reachable */
+    footer { position: sticky; bottom: 0; z-index: 4; flex-wrap: wrap; gap: 8px 12px; padding: 10px 16px; }
+
+    /* the fixed 420px width overflows a 390px screen */
+    #terms { left: 12px; right: 12px; width: auto; max-height: 50vh; }
+
+    /* #visual-frame is height:100%, so the pane needs a resolved height */
+    #visual { height: 78vh; }
+  }
+
+  /* Five looping animations had no escape hatch. The blanket reset below stops
+     everything that travels or rotates, but three of them are progress indicators
+     rather than decoration: freezing them removes the only sign that the agent is
+     working, because .spin has border-right-color:transparent and reads as a broken
+     ring, and #progress::after starts at left:-30% so a stopped one is invisible.
+     Those fade instead, legible with nothing moving. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+      scroll-behavior: auto !important;
+    }
+    /* spinner: stop rotating, close the ring so it does not look broken */
+    .spin { animation: pulse 1.6s ease-in-out infinite !important; border-right-color: currentColor !important; }
+    /* progress bar: stop travelling, become a full-width bar that pulses */
+    #progress::after { animation: pulse 1.6s ease-in-out infinite !important; left: 0 !important; width: 100% !important; }
+    /* status dot & Finish button: opacity/colour only, nothing moves — just slow them */
+    .dot.working { animation-duration: 2.4s !important; animation-iteration-count: infinite !important; }
+    #finish.ready { animation-duration: 2.4s !important; animation-iteration-count: infinite !important; }
+  }
 </style>
 </head>
 <body>
