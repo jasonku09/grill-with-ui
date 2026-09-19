@@ -547,6 +547,22 @@ test("patch: a stdin that cannot be read exits non-zero with one stderr line and
   assert.deepEqual(leftovers(session), [], "no temp file left behind");
 });
 
+test("patch: a patch that reaches stdin after the server has started reading is still applied", async () => {
+  const session = seeded({ questions: [qn("q1", 1)] });
+  const child = spawn(process.execPath, [SERVER, "patch", "--session", session], { env, stdio: ["pipe", "pipe", "pipe"] });
+  let out = "", err = "";
+  child.stdout.on("data", (d) => (out += d));
+  child.stderr.on("data", (d) => (err += d));
+  const exited = new Promise((res) => child.on("exit", res));
+  // Late enough that the server is already blocked reading an empty stdin, as with a slow writer on a pipe.
+  await sleep(500);
+  child.stdin.end(JSON.stringify({ agent: { handled: 4 } }));
+  assert.equal(await exited, 0, `patch failed: ${err}`);
+  assert.equal(err, "");
+  assert.equal(JSON.parse(out).handled, 4);
+  assert.equal(stateOf(session).agent.handled, 4);
+});
+
 test("patch: --file reads the patch from a file instead of stdin", () => {
   const session = seeded({ questions: [qn("q1", 1)] });
   const file = join(tmp("grill-pf-"), "patch.json");

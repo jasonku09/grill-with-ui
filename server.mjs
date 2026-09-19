@@ -21,6 +21,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import tty from "node:tty";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -445,7 +446,9 @@ function cmdPatch(o) {
     if (o.file === true) die("--file needs a path");
     try { text = fs.readFileSync(path.resolve(o.file), "utf8"); } catch (e) { die(`cannot read the patch file ${o.file}: ${e.code || oneLine(e.message)}`); }
   } else {
-    if (process.stdin.isTTY) die("no patch: pipe a JSON patch on stdin or pass --file <path>");
+    // tty.isatty, not process.stdin.isTTY: touching process.stdin creates a stream that makes fd 0
+    // non-blocking, and the read below would then fail with EAGAIN if the patch has not arrived yet.
+    if (tty.isatty(0)) die("no patch: pipe a JSON patch on stdin or pass --file <path>");
     try { text = fs.readFileSync(0, "utf8"); } catch (e) { die(`cannot read the patch from stdin: ${e.code || oneLine(e.message)}`); }
   }
   if (!text.trim()) die("empty patch: send a JSON object shaped like state.json");
