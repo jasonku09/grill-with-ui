@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -479,6 +479,68 @@ test("patch: invalid JSON, a failed validation, a bad shape, or a missing state.
   assert.notEqual(r.code, 0);
   assert.match(r.err, /^grill: [^\n]*state\.json[^\n]*\n$/);
   assert.deepEqual(readdirSync(empty), [], "nothing created");
+});
+
+test("patch: every field the page renders must have the shape the render reads, or the patch is rejected", () => {
+  const session = seeded({
+    terms: [{ term: "round", def: "One turn of questions.", avoid: ["batch"] }],
+    questions: [qn("q1", 1, { explore: { at: T0, rows: [{ option: "A", pros: ["p"], cons: ["c"] }] } })],
+    visual: { kind: "prototype", version: 1, at: T0, note: "v1", stale: false, thread: [] },
+  });
+  // The page renders each term as esc(t.def) and t.avoid.map(esc): a string avoid has a
+  // length but no map, and freezes the page.
+  rejected(session, { terms: [{ term: "round", def: "d", avoid: "batch" }] }, /round.*avoid/);
+  rejected(session, { terms: [{ term: "round", def: "d", avoid: [["batch"]] }] }, /round.*avoid/);
+  rejected(session, { terms: [{ term: "round", def: ["d"] }] }, /round.*def/);
+  // Each explore row is read as r.option, r.pros, r.cons: a null row throws.
+  const ex = (rows, at) => ({ questions: [{ id: "q1", explore: { ...(at === undefined ? {} : { at }), rows } }] });
+  rejected(session, ex([null]), /q1\.explore\.rows\[0\]/);
+  rejected(session, ex(["A"]), /q1\.explore\.rows\[0\]/);
+  rejected(session, ex([{ option: "A", pros: "fast", cons: ["c"] }]), /q1\.explore\.rows\[0\]\.pros/);
+  rejected(session, ex([{ option: "A", pros: ["p"], cons: [{ text: "c" }] }]), /q1\.explore\.rows\[0\]\.cons/);
+  rejected(session, ex([{ option: 1, pros: ["p"], cons: ["c"] }]), /q1\.explore\.rows\[0\]\.option/);
+  rejected(session, ex([], 12), /q1\.explore\.at/);
+  // Text the page puts on screen goes through String(): an object whose own toString is not a
+  // function throws there ("Cannot convert object to primitive value"), so rendered text must be text.
+  const boom = { toString: "x" };
+  rejected(session, { questions: [{ id: "q1", options: [{ k: "A", text: boom }] }] }, /q1\.options/);
+  rejected(session, { questions: [{ id: "q1", rec: { option: "A", why: boom } }] }, /q1\.rec\.why/);
+  rejected(session, { questions: [{ id: "q1", rec: { option: ["A"], why: "w" } }] }, /q1\.rec\.option/);
+  rejected(session, { questions: [{ id: "q1", rec: { text: 5, why: "w" } }] }, /q1\.rec\.text/);
+  rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "option", option: 2 } }] }, /q1\.answer\.option/);
+  rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "text", text: boom } }] }, /q1\.answer\.text/);
+  rejected(session, { visual: { note: boom } }, /visual\.note/);
+  rejected(session, { visual: { version: 2, at: 5 } }, /visual\.at/);
+  rejected(session, { visual: { drawing: { since: boom, seq: 2 } } }, /visual\.drawing/);
+  rejected(session, { finished: { doc: boom } }, /finished\.doc/);
+  rejected(session, { finished: { doc: "docs/x.md", visual: 1 } }, /finished\.visual/);
+  rejected(session, { finished: { doc: "docs/x.md", at: boom } }, /finished\.at/);
+
+  // Every shape SKILL.md documents still goes through, including the optional parts left out.
+  applied(session, {
+    terms: [{ term: "round", def: "d", avoid: [] }, { term: "send", def: "One press." }],
+    questions: [
+      { id: "q1", status: "answered", answer: { kind: "text", text: "Neither, a third way" }, rec: { text: "t", why: "w" },
+        explore: { rows: [{ option: "A", pros: ["p"], cons: [] }, { option: "B", pros: [], cons: ["c"] }] } },
+      { id: "q2", round: 2, title: "No options", body: "b", rec: { why: "only a why" } },
+    ],
+    visual: { version: 2, note: "v2: bigger", drawing: { seq: 3 } },
+    finished: { doc: "docs/x-design.md", visual: "docs/x-visual.html" },
+  });
+});
+
+test("patch: a stdin that cannot be read exits non-zero with one stderr line and leaves state.json untouched", () => {
+  const session = seeded({ questions: [qn("q1", 1)] });
+  const before = rawState(session);
+  // A directory as stdin: not a TTY, and reading it fails with EISDIR on every platform we run on.
+  const fd = openSync(tmp("grill-stdin-dir-"), "r");
+  let r;
+  try { r = spawnSync(process.execPath, [SERVER, "patch", "--session", session], { env, stdio: [fd, "pipe", "pipe"], encoding: "utf8" }); } finally { closeSync(fd); }
+  assert.notEqual(r.status, 0);
+  assert.equal(r.stdout, "", "nothing on stdout");
+  assert.match(r.stderr, /^grill: [^\n]*stdin[^\n]*\n$/, `exactly one grill: line on stderr, got: ${r.stderr}`);
+  assert.equal(rawState(session), before, "state.json untouched");
+  assert.deepEqual(leftovers(session), [], "no temp file left behind");
 });
 
 test("patch: --file reads the patch from a file instead of stdin", () => {

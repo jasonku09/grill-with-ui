@@ -347,22 +347,30 @@ function applyPatch(state, p, now) {
   return out;
 }
 
-// The shape the page and SKILL.md rely on (the schema at the end of SKILL.md).
+// The shape the page and SKILL.md rely on (the schema at the end of SKILL.md). Every field the
+// page reads is checked for the type the render uses it as: a list it maps is an array, and text
+// it shows is a string. Text goes through String() on the page, which throws on an object whose
+// own toString is not a function, so "any value" is not safe there. Optional fields stay optional.
 const STATUSES = ["open", "answered", "deferred", "reopened"];
 const ANSWER_KINDS = ["accept", "option", "text"];
 function validateState(s) {
   const need = (ok, msg) => { if (!ok) bad(msg); };
   const str = (v) => typeof v === "string";
+  const strs = (v) => Array.isArray(v) && v.every(str);
   const bool = (v) => typeof v === "boolean";
   const count = (v) => Number.isInteger(v) && v >= 0;
   const check = (o, k, ok, msg) => { if (k in o) need(ok(o[k]), msg); };
+  const texts = (o, keys, where) => { for (const k of keys) check(o, k, str, `${where}.${k} must be a string`); };
   const messages = (list, where) => {
     need(Array.isArray(list), `${where} must be an array`);
     list.forEach((m, i) => need(isObj(m) && (m.who === "user" || m.who === "agent") && str(m.text) && (m.at === undefined || str(m.at)),
       `${where}[${i}] must be {"who":"user"|"agent","text":"…","at":"ISO"}`));
   };
   for (const k of ["topic", "doc", "project", "created", "note"]) check(s, k, str, `${k} must be a string`);
-  check(s, "finished", isObj, 'finished must be an object ({"doc","visual","at"})');
+  if ("finished" in s) {
+    need(isObj(s.finished), 'finished must be an object ({"doc","visual","at"})');
+    texts(s.finished, ["doc", "visual", "at"], "finished");
+  }
   if ("agent" in s) {
     need(isObj(s.agent), "agent must be an object");
     check(s.agent, "status", (v) => v === "waiting" || v === "working", 'agent.status must be "waiting" or "working"');
@@ -371,7 +379,12 @@ function validateState(s) {
   }
   if ("terms" in s) {
     need(Array.isArray(s.terms), "terms must be an array");
-    s.terms.forEach((t, i) => need(isObj(t) && str(t.term), `terms[${i}] needs a string term`));
+    s.terms.forEach((t, i) => {
+      need(isObj(t) && str(t.term), `terms[${i}] needs a string term`);
+      const w = `term ${JSON.stringify(t.term)}`;
+      check(t, "def", str, `${w}: def must be a string`);
+      check(t, "avoid", strs, `${w}: avoid must be an array of strings`);
+    });
   }
   need(Array.isArray(s.questions), "questions must be an array");
   const ids = new Set();
@@ -383,11 +396,26 @@ function validateState(s) {
     need(str(q.title), `${w}.title must be a string`);
     need(STATUSES.includes(q.status), `${w}.status must be one of ${STATUSES.join("|")}`);
     need(isObj(q.rec), `${w}.rec must be an object ({"option","why"} or {"text","why"})`);
+    texts(q.rec, ["option", "text", "why"], `${w}.rec`);
     check(q, "body", str, `${w}.body must be a string`);
-    check(q, "deps", (v) => Array.isArray(v) && v.every(str), `${w}.deps must be an array of question ids`);
-    check(q, "options", (v) => Array.isArray(v) && v.every((x) => isObj(x) && str(x.k)), `${w}.options must be an array of {"k","text"}`);
-    check(q, "answer", (v) => isObj(v) && ANSWER_KINDS.includes(v.kind), `${w}.answer.kind must be one of ${ANSWER_KINDS.join("|")}`);
-    check(q, "explore", (v) => isObj(v) && Array.isArray(v.rows), `${w}.explore must be {"at","rows":[…]}`);
+    check(q, "deps", strs, `${w}.deps must be an array of question ids`);
+    check(q, "options", (v) => Array.isArray(v) && v.every((x) => isObj(x) && str(x.k) && (!("text" in x) || str(x.text))),
+      `${w}.options must be an array of {"k","text"} with string k and text`);
+    if ("answer" in q) {
+      need(isObj(q.answer) && ANSWER_KINDS.includes(q.answer.kind), `${w}.answer.kind must be one of ${ANSWER_KINDS.join("|")}`);
+      texts(q.answer, ["option", "text"], `${w}.answer`);
+    }
+    if ("explore" in q) {
+      const e = q.explore;
+      need(isObj(e) && Array.isArray(e.rows), `${w}.explore must be {"at","rows":[…]}`);
+      check(e, "at", str, `${w}.explore.at must be an ISO time string`);
+      e.rows.forEach((r, i) => {
+        const where = `${w}.explore.rows[${i}]`;
+        need(isObj(r), `${where} must be {"option","pros":[…],"cons":[…]}`);
+        check(r, "option", str, `${where}.option must be a string`);
+        for (const k of ["pros", "cons"]) check(r, k, strs, `${where}.${k} must be an array of strings`);
+      });
+    }
     for (const k of ["durable", "updated"]) check(q, k, bool, `${w}.${k} must be true or false`);
     if ("thread" in q) messages(q.thread, `${w}.thread`);
   });
@@ -398,8 +426,9 @@ function validateState(s) {
     check(v, "version", count, "visual.version must be a whole number");
     need("kind" in v && "version" in v, "visual needs kind and version; the first Visualize draw creates it (version 0)");
     check(v, "stale", bool, "visual.stale must be true or false");
-    check(v, "drawing", isObj, 'visual.drawing must be {"since","seq"}');
-    check(v, "queued", (x) => Array.isArray(x) && x.every(str), "visual.queued must be an array of strings");
+    texts(v, ["note", "at"], "visual");
+    check(v, "drawing", (x) => isObj(x) && (!("since" in x) || str(x.since)), 'visual.drawing must be {"since":"ISO","seq":N}');
+    check(v, "queued", strs, "visual.queued must be an array of strings");
     if ("thread" in v) messages(v.thread, "visual.thread");
   }
 }
@@ -413,7 +442,7 @@ function cmdPatch(o) {
     try { text = fs.readFileSync(path.resolve(o.file), "utf8"); } catch (e) { die(`cannot read the patch file ${o.file}: ${e.code || oneLine(e.message)}`); }
   } else {
     if (process.stdin.isTTY) die("no patch: pipe a JSON patch on stdin or pass --file <path>");
-    text = fs.readFileSync(0, "utf8");
+    try { text = fs.readFileSync(0, "utf8"); } catch (e) { die(`cannot read the patch from stdin: ${e.code || oneLine(e.message)}`); }
   }
   if (!text.trim()) die("empty patch: send a JSON object shaped like state.json");
   let p;
