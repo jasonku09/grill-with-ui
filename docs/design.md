@@ -113,6 +113,19 @@ keeps one Claude session behind it so nothing is ever out of context.
   resumes polling. If the port moved, the tab says so and points at the terminal.
 - **Spike first** (Q14): minimal server + one-textarea page + a stub prompt holding only
   the event rule, one real round, before cards/threads/Finish are built.
+- **The agent writes `state.json` through `patch`, never whole** (2026-09-18). Rewriting
+  the whole file on every Send put the entire state into the agent's transcript as output
+  each turn; real grills reach 55–66 KB (~15k tokens) after 11–20 sends, so each send cost
+  more than the last. `node server.mjs patch --session DIR` reads a JSON patch shaped like
+  the state (on stdin, or `--file`), merges it (null deletes; `agent`/`visual` one level;
+  questions by `id`, an unknown id needs a `title`; threads and `visual.queued` append;
+  terms by `term`; anything else replaced), validates the result, and renames a temp file
+  over the old one, so the page still sees one consistent update per patch and the
+  send's answers, next round, and `agent.handled` still land together. It prints one short
+  line, never the state. Measured on the largest real grill (62 KB, 20 sends): one typical
+  send (an answer, a thread reply, a new question, the handled bump) is a 3.0 KB patch
+  against a 64.7 KB whole file. Incoming Sends were already diffs; this makes the outgoing
+  side one too. Locked decision 2 still holds: the agent is the only writer.
 
 ## Verified facts (2026-09-06)
 

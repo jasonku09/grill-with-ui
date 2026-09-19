@@ -13,15 +13,79 @@ replies, statuses, agent status. `events.jsonl` is **the page's alone**: one lin
 Nobody writes the other's file. The page polls `state.json`; you are woken per event line.
 A third file, `visual.html`, is also yours, drawn by a subagent you run (see Visualize).
 
+**You change `state.json` only through `patch`** (next section), never with a file-write or
+edit tool. A whole-file write puts the entire state into this conversation on every turn, and
+the state grows with the grill: after twenty sends one rewrite is about 60 KB, some 15k
+tokens, paid again on every send. A patch carries only what changed. Below, "set" and
+"append" mean a key in a patch, and `null` is how a key is deleted.
+
+## Patching state.json
+
+```sh
+node $SKILL/server.mjs patch --session <session> <<'GRILL_PATCH'
+{ …only what changed… }
+GRILL_PATCH
+```
+
+The delimiter is quoted, so the shell expands nothing inside it. (`--file <path>` reads the
+patch from a file instead, for harnesses where heredocs are awkward.) It merges the patch,
+validates the result, and swaps the file in atomically, so the page sees one consistent
+update per patch. It works whether or not `serve` is running. It prints one line,
+`{"ok":true,"questions":12,"open":3,"handled":14,"bytes":41233}`, never the state. A bad
+patch exits non-zero with a one-line error and leaves the file untouched: fix the patch and
+run it again.
+
+The patch is shaped like `state.json` (schema at the end):
+
+- `null` deletes a key, at any level: `"answer": null`, `"drawing": null`, `"visual": null`.
+- `agent` and `visual` merge one level: keys you give replace those keys; the rest stay.
+- `questions` is keyed by `id`. A known id merges one level: each field you give replaces
+  that field whole (`rec`, `answer`, `options`, `deps`, `explore`). An unknown id is a new
+  question, appended; it needs `round`, `title`, and `rec` (give `body` and `options` too);
+  `status: "open"`, `deps: []`, `options: []`, `thread: []`, `durable: false`, and
+  `updated: false` are filled in. An unknown id without `title` is an error, not a new
+  question (ids are case-sensitive: `q7`, never `Q7`).
+- `thread` (on a question and on `visual`) and `visual.queued` append: list only the new
+  messages or bullets.
+- `terms` is keyed by `term`: a known term is replaced whole, a new one appended.
+- Every other key (`note`, `finished`, `doc`, …) is replaced whole.
+
+**Never write the current time; the server stamps every time you leave out**: `agent.since`
+whenever you give `agent.status`, `at` on each appended message, `explore.at`, `visual.at`
+when `version` changes, `visual.drawing.since`, and `finished.at`. A time you give always
+wins; give one only when copying it from a send line (a user's thread message takes the
+send's `at`).
+
+A typical send (Q2 answered, a reply in Q4's thread, one new question, the acknowledgement):
+
+```sh
+node $SKILL/server.mjs patch --session <session> <<'GRILL_PATCH'
+{
+  "agent": { "status": "waiting", "handled": 5 },
+  "questions": [
+    { "id": "q2", "status": "answered", "answer": { "kind": "option", "option": "B" }, "updated": false },
+    { "id": "q4", "thread": [
+      { "who": "user", "text": "Why not keep staged answers in localStorage?", "at": "2026-09-18T21:39:58Z" },
+      { "who": "agent", "text": "localStorage is per browser profile, so a second browser or a cleared profile loses them. The session folder survives both, at the cost of one more file." } ] },
+    { "id": "q7", "round": 4, "deps": ["q2"], "title": "Who owns the retry budget?",
+      "body": "With the server-side queue settled in Q2, retries need an owner.",
+      "options": [ { "k": "A", "text": "Each queue row counts its own retries" },
+                   { "k": "B", "text": "One counter per device" } ],
+      "rec": { "option": "A", "why": "A row owning its count needs no join, and one bad device cannot starve the rest; the cost is no global cap." } }
+  ]
+}
+GRILL_PATCH
+```
+
 ## Start (`/grill-with-ui <topic>`, `$grill-with-ui <topic>`, or "grill with ui: <topic>")
 
 1. From the project directory run
    `node $SKILL/server.mjs new --topic "<topic>" --doc "<doc path>"`.
    The doc path defaults to `docs/<slug-of-topic>-design.md` under the project root (create the
    folder later if needed). It prints one JSON line; keep `session` (the session folder).
-2. Write round 1 into `<session>/state.json` (schema at the end): one to three independent
-   questions, each with lettered options, one recommendation, and a one-paragraph why. Set
-   `agent.status` to `"waiting"` and `agent.since` to now.
+2. Patch round 1 in (`new` already wrote the skeleton): one to three independent questions,
+   each with lettered options, one recommendation, and a one-paragraph why, plus any `terms`
+   and `"agent": { "status": "waiting" }`.
 3. Open a **persistent Monitor** (`persistent: true`) whose command is
    `node $SKILL/server.mjs serve --session <session>`, description `grill page: <topic>`.
    No Monitor tool in your harness (Codex, Gemini CLI, Cursor, Copilot, others)? Use
@@ -36,9 +100,11 @@ A third file, `visual.html`, is also yours, drawn by a subagent you run (see Vis
    unfinished session, newest first; `--all` includes finished ones).
 2. Exactly one line: take it. Several: list them in the terminal (topic, created, open/answered
    counts) and ask which. None: say so and stop.
-3. Run `node $SKILL/server.mjs pending --session <session>`. Every line printed is a Send the
-   user made while no agent was listening. Apply them all in one turn, in order, following
-   "Handling a send" (write `agent.handled` to the last seq).
+3. Read `<session>/state.json` once to load the grill (reading is fine; only writes go
+   through `patch`). Run `node $SKILL/server.mjs pending --session <session>`. Every line
+   printed is a Send the user made while no agent was listening. Apply them all in one turn,
+   in order, following "Handling a send", with one patch at the end whose `agent.handled`
+   is the last seq.
 4. Continue with Start steps 3–5. `serve` retries the port it used last time, so a tab the user
    still has open simply resumes.
 
@@ -61,51 +127,57 @@ described there, then end the turn.
 
 ## Handling a send
 
-1. Write `state.json` with `agent.status = "working"` (the page disables Send while you work).
-2. Apply each item of `actions` in order (every item but `finish` names a question id `q`):
+1. Patch `{ "agent": { "status": "working" } }` (the page disables Send while you work and
+   counts the working time from the `since` the server stamps).
+2. Work through each item of `actions` in order, collecting its changes for the step 6
+   patch (every item but `finish` names a question id `q`):
    - `answer` → set that question's `answer` (`kind` accept|option|text, plus `option` or
-     `text`) and `status = "answered"`.
-   - `thread` → append `{who:"user", text, at}` to the question's `thread`, then append your
-     reply `{who:"agent", text, at}`. Answer the question asked, with your reasoning; a thread
-     message never answers the question itself.
-   - `defer` → `status = "deferred"`. `reopen` → `status = "reopened"`, delete `answer`.
-   - `explore` → write the question's `explore`: `{ at, rows: [{ option, pros: [...], cons: [...] }] }`,
+     `text`) and `status: "answered"`.
+   - `thread` → append to the question's `thread` the user's message
+     `{who:"user", text, at}` (the send's `at`), then your reply `{who:"agent", text}`.
+     Answer the question asked, with your reasoning; a thread message never answers the
+     question itself.
+   - `defer` → `status: "deferred"`. `reopen` → `status: "reopened"`, `answer: null`.
+   - `explore` → set the question's `explore`: `{ rows: [{ option, pros: [...], cons: [...] }] }`,
      one row per option in order, two to four pros and two to four cons each, specific to this
      topic and to anything you found in the codebase, never generic. Be as honest about the
      recommended option's cons as about the others'. The page renders it as a table in the
-     question's discussion panel. If writing it changes your mind, rewrite `rec` and set
+     question's discussion panel. If writing it changes your mind, set a new `rec` and
      `updated: true`. The page sends `explore` the moment the button is clicked, usually as
-     the only action in its send; handle it like any other send (working → write → waiting).
+     the only action in its send; handle it like any other send (working → patch → waiting).
    - `visualize` → see Visualize below: launch the draw subagent in the background and mark
      `visual.drawing`; the send counts as handled the moment the brief is out. The page
      sends it the moment the button (or Regenerate) is clicked, usually alone.
-   - `visual-feedback` → append `{who:"user", text, at}` to `visual.thread`, reply there
-     `{who:"agent", text, at}`, and request a redraw with the change (see Visualize; while a
-     draw is in flight the note goes to `visual.queued` instead of starting a second one).
+   - `visual-feedback` → append `{who:"user", text, at}` (the send's `at`) to
+     `visual.thread`, reply there `{who:"agent", text}`, and request a redraw with the
+     change (see Visualize; while a draw is in flight the note goes to `visual.queued`
+     instead of starting a second one).
      If the note contradicts an **answered** question, do not change that answer:
-     set the question's `status = "reopened"`, quote the note in its `thread`, rewrite its
-     `rec` to what the note implies, set `updated: true`. The answer changes only when the
-     user answers the reopened question. The visual follows the note either way.
+     set the question's `status: "reopened"`, append the quoted note to its `thread`, set
+     its `rec` to what the note implies, and set `updated: true`. The answer changes only
+     when the user answers the reopened question. The visual follows the note either way.
    - `finish` → see Finish below, after the other actions. The page sends it the moment the
      user confirms, with everything they had staged in front of it.
-3. If an answer changes the recommendation of a still-open question, rewrite that question's
-   `rec` in place and set `updated: true` (the page marks it). Clear `updated` once the user
+3. If an answer changes the recommendation of a still-open question, give that question its
+   new `rec` and `updated: true` (the page marks it). Set `updated: false` once the user
    answers it.
 4. Add the next round: the frontier (see Interview method), up to three when independent,
-   each with `deps` listing the question ids it depends on. New questions get the next round
-   number. If the tree is fully walked, add no questions and set `note` to a short sentence
-   saying every branch is settled and Finish is the next step.
+   each a new question entry with `deps` listing the question ids it depends on. New
+   questions get the next round number. If the tree is fully walked, add no questions and
+   set `note` to a short sentence saying every branch is settled and Finish is the next step.
 5. **Ordinary turns do not redraw the visual.** When an answer, reopen, or changed
-   recommendation affects what an existing visual shows, set `visual.stale = true`.
+   recommendation affects what an existing visual shows, set `"visual": { "stale": true }`.
    Leave `visual.html`, `version`, `at`, and `note` unchanged; the page marks it out of date
    and the user can click **Regenerate** when ready. Do not launch a draw subagent merely
    because the next round is ready. Explicit `visualize` and `visual-feedback` actions
    still request a draw, and Finish still reconciles the exported visual.
-6. Write `state.json` with `agent.status = "waiting"`, `agent.since = now`,
-   `agent.handled = <seq of this send>`. Publish the answer/thread updates, next round,
-   and this acknowledgement together in the same whole-file write. Do not publish the
-   next round with an old `handled` value while doing optional work: the page uses
-   `handled` to clear the previous question's "sent" spinner and enable the next Send.
+6. Send everything from steps 2–5 **in ONE patch**, together with
+   `"agent": { "status": "waiting", "handled": <seq of this send> }`
+   (the example under "Patching state.json" is this patch). One patch is one atomic swap,
+   so the page sees the answers, thread replies, next round, and acknowledgement together.
+   Never publish the next round in one patch and `handled` in a later one while you do
+   optional work: the page uses `handled` to clear the previous question's "sent" spinner
+   and enable the next Send.
 7. Print exactly one terminal line, e.g.
    `grill: handled send #3 (Q2 → B, Q4 thread); round 4 has 2 questions; visual v3 out of date`,
    and end the turn.
@@ -145,7 +217,7 @@ know where it lands from the grill; tell the subagent.
 **You never write `visual.html` yourself; a subagent draws it.** The file runs to hundreds
 of lines and is redrawn many times over a grill. Drawing it here would fill this session's
 context with markup and slow every later send. You stay the interviewer: you pick the kind,
-write the brief, and record the result in `state.json`. The rules for the file itself live
+write the brief, and record the result with `patch`. The rules for the file itself live
 in `$SKILL/visual-brief.md`; the subagent reads them, you do not repeat them.
 
 Draw only for the first Visualize click, Regenerate, explicit visual feedback, or the
@@ -157,9 +229,10 @@ Every requested draw goes like this. **The draw runs in the background and the i
 goes on**: the send that requested it is handled the moment the brief is out, so the user
 keeps answering and sending while the subagent draws.
 
-1. Launch ONE subagent with the Agent tool (it runs in the background and you get a
-   completion notice later), general-purpose type, prompt filled in from this template
-   (use the absolute path of `$SKILL`):
+1. Stat `<session>/visual.html` (do not read it) and note its modification time; a first
+   draw has none. Then launch ONE subagent with the Agent tool (it runs in the background
+   and you get a completion notice later), general-purpose type, prompt filled in from this
+   template (use the absolute path of `$SKILL`):
 
    > Draw the visual for a grill-with-ui design interview. Read `$SKILL/visual-brief.md`
    > first and follow it exactly. Session folder: `<session>`. Project root: `<project>`.
@@ -178,40 +251,43 @@ keeps answering and sending while the subagent draws.
 
    One send with several triggers (feedback plus answers that change the visual) is one
    draw with all of them in the list.
-2. In the same turn write `state.json`. On a first draw create
-   `visual = { kind, version: 0, thread: [], stale: false, drawing: { since: now, seq } }`.
-   On a redraw keep `version`, `at`, `note`, and the file as they are and set
-   `stale = false` and `drawing = { since: now, seq }`. Then finish the send as usual
-   (`agent.handled = seq`, `agent.status = "waiting"`), print the terminal line with
-   "visual drawing" in it, and end the turn. The page reads `drawing`: on a first draw it
-   stays on the questions with the header button reading Visualizing… and flips to the
-   visual by itself when v1 lands; on a redraw it keeps the current version on screen with
-   regenerating… in the strip. Send stays enabled throughout.
+2. Put the draw into the send's one step-6 patch. On a first draw:
+   `"visual": { "kind": …, "version": 0, "thread": [], "stale": false, "drawing": { "seq": <seq> } }`.
+   On a redraw: `"visual": { "stale": false, "drawing": { "seq": <seq> } }`;
+   the merge keeps `version`, `at`, `note`, and `thread`, and the file stays as it is. The
+   same patch finishes the send as usual (`agent.handled`, `"status": "waiting"`); print
+   the terminal line with "visual drawing" in it and end the turn. The page reads
+   `drawing`: on a first draw it stays on the questions with the header button reading
+   Visualizing… and flips to the visual by itself when v1 lands; on a redraw it keeps the
+   current version on screen with regenerating… in the strip. Send stays enabled
+   throughout.
 3. **While a draw is in flight**, handle sends normally. An answer, reopen, or changed
-   recommendation that affects the visual sets `stale = true` as usual (the in-flight
+   recommendation that affects the visual sets `"stale": true` as usual (the in-flight
    draw did not see it). A new draw request (Visualize, Regenerate, or visual feedback)
    does not start a second subagent: reply in the thread now and append the request as
-   one bullet to `visual.queued`. Never run two draws at once; both would write the same
-   file.
-4. **When the draw lands** (its completion notice wakes you): confirm
-   `<session>/visual.html` exists and is newer than `drawing.since` (stat it; do not read
-   it). Bump `version` (0 → 1 on a first draw), set `at`, set `note` to one line naming
-   what changed, taken from the subagent's reply ("v3: discussion panel moved to the right
-   per Q3"), delete `drawing`, and leave `stale` as it is. If `visual.queued` is
-   non-empty, launch the next draw at once with those bullets as the change list (steps
-   1–2 again, `drawing.seq` = the last handled seq) and delete `queued`. Write
-   `state.json`, print one line ("grill: visual v3 landed", or "… landed; drawing v4 from
-   2 queued notes"), and end the turn. Never bump without a new file and never let a new
-   file land without a bump; the page reloads the iframe only on a bump.
-5. If the subagent fails or the file did not change: on a first draw delete `visual`
-   entirely and set `note` (the sentence above the question list) to say the draw failed
-   and Visualize can be clicked again; on a redraw delete `drawing` and append one
-   `{who:"agent"}` message to `visual.thread` saying so. Do not bump either way.
+   one bullet, `"visual": { "queued": ["feedback: …"] }`. Never run two draws at once;
+   both would write the same file.
+4. **When the draw lands** (its completion notice wakes you): stat `<session>/visual.html`
+   again (do not read it) and confirm it exists with a modification time later than the one
+   you noted at launch. Then patch `"visual": { "version": <version + 1>, "note": …, "drawing": null }`
+   (0 → 1 on a first draw; `note` is one line naming what changed, taken from the
+   subagent's reply: "v3: discussion panel moved to the right per Q3"). Leave `stale` out
+   of it. If `visual.queued` is non-empty, launch the next draw at once with those bullets
+   as the change list (step 1 again), and in the same patch give
+   `"drawing": { "seq": <last handled seq> }` instead of `null`, plus
+   `"queued": null`. Print one line ("grill: visual v3 landed", or "… landed; drawing v4
+   from 2 queued notes") and end the turn. Never bump without a new file and never let a
+   new file land without a bump; the page reloads the iframe only on a bump.
+5. If the subagent fails or the file did not change: on a first draw patch
+   `"visual": null` and a `note` (the sentence above the question list) saying the draw
+   failed and Visualize can be clicked again; on a redraw patch
+   `"visual": { "drawing": null, "thread": [{ "who": "agent", "text": … }] }` saying so. Do
+   not bump either way.
 
 Background draws rely on your being the top-level session: a subagent's own background
 tasks are dropped when its turn ends. If you are yourself running as a subagent, or your
 harness has no subagent tool, draw the file yourself from `visual-brief.md`, inline, then
-bump the version in the same turn as the rest of the send.
+bump the version in the send's one patch.
 
 Feedback arrives as `visual-feedback` actions (see Handling a send); sending visual feedback
 explicitly requests a redraw. Answers and question discussions do not. On Finish the visual
@@ -220,10 +296,11 @@ is reconciled with the decisions and copied next to the doc.
 ## Terminal input
 
 Text the user types in the terminal during a grill answers the current question when that is
-unambiguous (one open question, or the text names one): record it into `state.json` exactly as
-a page send would (`answer.kind = "text"`, or `option` when it is a letter), then continue as
-in "Handling a send" from step 3. Otherwise ask which question it answers, in one line. The
-doc path may also be changed this way ("write the doc to …").
+unambiguous (one open question, or the text names one): record it exactly as a page send would
+(`answer.kind: "text"`, or `"option"` when it is a letter, and `status: "answered"`), then
+continue as in "Handling a send" from step 3. Its step 6 patch leaves `agent.handled` as it is:
+there was no send. Otherwise ask which question it answers, in one line. The doc path may
+also be changed this way ("write the doc to …" → patch `"doc"`).
 
 ## Finish
 
@@ -239,14 +316,16 @@ On a `finish` action, or when the user says finish in the terminal:
    (deferred questions, with what would reopen them); **Open threads** (discussion points
    that ended without a decision). Do not compress: a reader with no access to the session
    must be able to build from it.
-2. Write `state.json` with `finished = { doc, at }` and `agent.status = "waiting"`; the page
-   shows the finished banner and locks staging.
+2. Patch `"finished": { "doc": … }` and `"agent": { "status": "waiting" }`
+   (after a page Finish this is the send's one patch, with `handled`); the page shows the
+   finished banner and locks staging.
 3. If `state.visual` exists, it must be reconciled with every answered question before it
    is exported. If no draw is in flight and it is not stale and nothing disagrees, copy
    `<session>/visual.html` to `docs/<slug>-visual.html` next to the doc (same folder, same
-   slug, `-visual.html`) and set `finished.visual` to that path. Otherwise request one
-   reconciling draw (or let the in-flight one land), end the turn, and when it lands copy
-   the file and set `finished.visual` then.
+   slug, `-visual.html`) and add `"visual": <that path>` to `finished` (it is replaced
+   whole, so give `doc` again, or fold it into the step 2 patch). Otherwise
+   request one reconciling draw (or let the in-flight one land), end the turn, and when it
+   lands copy the file and patch `finished` with `visual` then.
 4. Stop the monitor with TaskStop, once there is no draw in flight.
 5. Print one line with the doc path (and the visual's). End.
 
@@ -255,12 +334,15 @@ On a `finish` action, or when the user says finish in the terminal:
 Start the server detached with its output going to a log:
 `nohup node $SKILL/server.mjs serve --session <session> > <session>/serve.log 2>&1 &`, then
 run `url` as in Start. Instead of a monitor, loop in the foreground:
-`node $SKILL/server.mjs wait --session <session> --after <agent.handled> --timeout 480`.
+`node $SKILL/server.mjs wait --session <session> --after <agent.handled> --timeout 480`
+(`handled` is in the line your last patch printed).
 It prints the next send line and exits 0, or exits 3 on timeout (re-issue it). Handle each
 printed line exactly as in "Handling a send". On finish, kill the server by the `pid` in
 `<session>/server.json`.
 
 ## state.json
+
+What each field means. You write it only through `patch`.
 
 ```jsonc
 {

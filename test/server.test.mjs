@@ -1,8 +1,8 @@
-// Spike tests for server.mjs: session creation, serve (page/state/send), wait, url.
+// Tests for server.mjs: session creation, serve (page/state/send), wait, url, sessions, pending, patch.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -212,4 +212,331 @@ test("pending: prints the events past agent.handled, nothing when caught up", as
   assert.equal(run(["pending", "--session", session]), "");
   delete st.agent.handled; writeFileSync(join(session, "state.json"), JSON.stringify(st));
   assert.equal(run(["pending", "--session", session]).split("\n").length, 3, "no handled means everything is pending");
+});
+
+// ---- patch: the agent's only way to write state.json ----
+const T0 = "2026-09-01T10:00:00.000Z";
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+const stateOf = (session) => JSON.parse(readFileSync(join(session, "state.json"), "utf8"));
+const rawState = (session) => readFileSync(join(session, "state.json"), "utf8");
+const leftovers = (session) => readdirSync(session).filter((f) => !["state.json", "events.jsonl", "server.json"].includes(f));
+const qn = (id, round, extra = {}) => ({
+  id, round, deps: [], title: `Title ${id}`, body: `Body ${id}`,
+  options: [{ k: "A", text: "Alpha" }, { k: "B", text: "Beta" }], rec: { option: "A", why: "Alpha is simpler." },
+  status: "open", durable: false, updated: false, thread: [], ...extra,
+});
+function seeded(fields = {}) {
+  const { session } = newSession(tmp("grill-pt-"), "Patch topic");
+  const st = { ...stateOf(session), agent: { status: "waiting", since: T0, handled: 0 }, ...fields };
+  writeFileSync(join(session, "state.json"), JSON.stringify(st, null, 2));
+  return session;
+}
+function patch(session, body, extra = []) {
+  const input = body === undefined ? "" : typeof body === "string" ? body : JSON.stringify(body);
+  const r = spawnSync(process.execPath, [SERVER, "patch", "--session", session, ...extra], { env, input, encoding: "utf8" });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+}
+function applied(session, body, extra) {
+  const r = patch(session, body, extra);
+  assert.equal(r.code, 0, `patch failed: ${r.err}`);
+  assert.equal(r.err, "");
+  return r;
+}
+// A time the server stamped: ISO, and taken while the patch between t1 and t2 ran.
+function stampedBetween(at, t1, t2, what) {
+  assert.match(String(at), ISO, `${what} is an ISO time`);
+  const t = Date.parse(at);
+  assert.ok(t >= t1 - 1000 && t <= t2 + 1000, `${what} (${at}) was stamped by this patch`);
+}
+function rejected(session, body, pattern, extra) {
+  const before = rawState(session);
+  const r = patch(session, body, extra);
+  assert.notEqual(r.code, 0, `expected a rejection for ${typeof body === "string" ? body : JSON.stringify(body)}`);
+  assert.equal(r.out, "", "nothing on stdout when rejected");
+  assert.match(r.err, /^grill: [^\n]+\n$/, "exactly one line on stderr");
+  if (pattern) assert.match(r.err, pattern);
+  assert.equal(rawState(session), before, "state.json untouched");
+  assert.deepEqual(leftovers(session), [], "no temp file left behind");
+  return r;
+}
+
+test("patch: agent and visual merge one level; other top-level keys are replaced whole; stdout is one short line", () => {
+  const session = seeded({
+    note: "old note", doc: "docs/a-design.md",
+    agent: { status: "working", since: T0, handled: 3 },
+    questions: [qn("q1", 1), qn("q2", 1, { status: "answered", answer: { kind: "accept" } })],
+    visual: { kind: "prototype", version: 2, at: T0, note: "v2: first", stale: true, drawing: { since: T0, seq: 3 }, thread: [{ who: "user", text: "bigger", at: T0 }] },
+  });
+  const r = applied(session, {
+    agent: { handled: 4 },
+    visual: { stale: false, note: "v3: bigger", drawing: { since: "2026-09-01T11:00:00.000Z", seq: 4 } },
+    note: "new note", doc: "docs/b-design.md", finished: { doc: "docs/b-design.md", visual: "docs/b-visual.html", at: T0 },
+  });
+  const st = stateOf(session);
+  assert.deepEqual(st.agent, { status: "working", since: T0, handled: 4 });
+  assert.deepEqual(st.visual, { kind: "prototype", version: 2, at: T0, note: "v3: bigger", stale: false, drawing: { since: "2026-09-01T11:00:00.000Z", seq: 4 }, thread: [{ who: "user", text: "bigger", at: T0 }] });
+  assert.equal(st.note, "new note");
+  assert.equal(st.doc, "docs/b-design.md");
+  assert.equal(st.topic, "Patch topic", "untouched keys stay");
+  assert.equal(st.questions.length, 2);
+
+  assert.match(r.out, /^[^\n]+\n$/, "exactly one line on stdout");
+  assert.ok(r.out.length < 120, `short: ${r.out}`);
+  assert.deepEqual(JSON.parse(r.out), { ok: true, questions: 2, open: 1, handled: 4, bytes: statSync(join(session, "state.json")).size });
+  for (const leak of ["Patch topic", "Title q1", "bigger", "new note"]) assert.ok(!r.out.includes(leak), `stdout never echoes the state (${leak})`);
+  assert.deepEqual(leftovers(session), [], "no temp file left behind");
+
+  applied(session, { finished: { doc: "docs/c-design.md", at: T0 } });
+  assert.deepEqual(stateOf(session).finished, { doc: "docs/c-design.md", at: T0 }, "finished is replaced whole, not merged");
+});
+
+test("patch: questions merge one level by id; each given field replaces that field whole", () => {
+  const explore = { at: T0, rows: [{ option: "A", pros: ["p"], cons: ["c"] }] };
+  const session = seeded({
+    questions: [
+      qn("q1", 1, { updated: true, explore, thread: [{ who: "user", text: "hm", at: T0 }, { who: "agent", text: "ok", at: T0 }] }),
+      qn("q2", 1),
+    ],
+  });
+  const before = stateOf(session);
+  applied(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "option", option: "B" }, rec: { option: "B" }, updated: false, options: [{ k: "A", text: "Alpha" }, { k: "B", text: "Beta" }, { k: "C", text: "Gamma" }] }] });
+  const st = stateOf(session);
+  assert.deepEqual(st.questions.map((q) => q.id), ["q1", "q2"], "order kept, nothing appended");
+  const q1 = st.questions[0];
+  assert.deepEqual(q1.rec, { option: "B" }, "rec replaced whole, not deep-merged");
+  assert.deepEqual(q1.answer, { kind: "option", option: "B" });
+  assert.equal(q1.status, "answered");
+  assert.equal(q1.updated, false);
+  assert.equal(q1.options.length, 3);
+  assert.equal(q1.title, "Title q1");
+  assert.equal(q1.body, "Body q1");
+  assert.deepEqual(q1.explore, explore);
+  assert.deepEqual(q1.thread, before.questions[0].thread, "thread untouched when the patch has none");
+  assert.deepEqual(st.questions[1], before.questions[1], "other questions untouched");
+});
+
+test("patch: a new id with a title is appended with defaults; an unknown id without a title is rejected, state untouched", () => {
+  const session = seeded({ questions: [qn("q1", 1)] });
+  applied(session, { questions: [
+    { id: "q2", round: 2, deps: ["q1"], title: "Second", body: "B2", options: [{ k: "A", text: "Yes" }], rec: { option: "A", why: "w" }, durable: true },
+    { id: "q3", round: 2, title: "Free text", body: "B3", rec: { text: "Something", why: "w" } },
+  ] });
+  const st = stateOf(session);
+  assert.deepEqual(st.questions.map((q) => q.id), ["q1", "q2", "q3"]);
+  assert.deepEqual(st.questions[1], { id: "q2", round: 2, deps: ["q1"], title: "Second", body: "B2", options: [{ k: "A", text: "Yes" }], rec: { option: "A", why: "w" }, durable: true, status: "open", thread: [], updated: false });
+  assert.deepEqual(st.questions[2], { id: "q3", round: 2, title: "Free text", body: "B3", rec: { text: "Something", why: "w" }, status: "open", deps: [], options: [], thread: [], durable: false, updated: false });
+
+  rejected(session, { agent: { handled: 1 }, questions: [{ id: "Q1", status: "answered", answer: { kind: "accept" } }] }, /Q1/);
+  rejected(session, { questions: [{ id: "q9", round: 3, title: "No rec" }] }, /q9.*rec/);
+  rejected(session, { questions: [{ id: "q9", title: "No round", rec: { option: "A" } }] }, /q9.*round/);
+  rejected(session, { questions: [{ status: "open" }] }, /id/);
+});
+
+test("patch: thread and visual.queued append; appended messages without at get the current time", () => {
+  const m = (who, text, at = T0) => ({ who, text, at });
+  const session = seeded({
+    questions: [qn("q1", 1, { thread: [m("user", "first")] })],
+    visual: { kind: "diagram", version: 1, at: T0, thread: [m("agent", "v1 drawn")], drawing: { since: T0, seq: 1 }, queued: ["feedback: bigger"] },
+  });
+  const t1 = Date.now();
+  applied(session, {
+    questions: [{ id: "q1", thread: [m("user", "why?", "2026-09-01T10:05:00.000Z"), { who: "agent", text: "because" }] },
+      { id: "q2", round: 2, title: "New", rec: { text: "t", why: "w" }, thread: [{ who: "agent", text: "context" }] }],
+    visual: { thread: [{ who: "user", text: "smaller" }], queued: ["feedback: smaller"] },
+  });
+  const t2 = Date.now();
+  const st = stateOf(session);
+  const within = (at) => { assert.match(at, ISO); const t = Date.parse(at); assert.ok(t >= t1 - 1000 && t <= t2 + 1000, at); };
+  const th = st.questions[0].thread;
+  assert.deepEqual(th.slice(0, 2), [m("user", "first"), m("user", "why?", "2026-09-01T10:05:00.000Z")], "existing kept, given at kept");
+  assert.equal(th.length, 3);
+  assert.equal(th[2].text, "because"); within(th[2].at);
+  within(st.questions[1].thread[0].at);
+  assert.deepEqual(st.visual.thread[0], m("agent", "v1 drawn"));
+  assert.equal(st.visual.thread[1].text, "smaller"); within(st.visual.thread[1].at);
+  assert.deepEqual(st.visual.queued, ["feedback: bigger", "feedback: smaller"]);
+  assert.deepEqual(st.visual.drawing, { since: T0, seq: 1 }, "the rest of visual is kept");
+  rejected(session, { questions: [{ id: "q1", thread: { who: "user", text: "not a list" } }] }, /thread/);
+  rejected(session, { visual: { queued: "not a list" } }, /queued/);
+});
+
+test("patch: the server stamps the times the agent leaves out; an explicit time in the patch always wins", () => {
+  const rows = [{ option: "A", pros: ["p"], cons: ["c"] }];
+  const session = seeded({
+    agent: { status: "working", since: T0, handled: 2 },
+    questions: [qn("q1", 1), qn("q2", 1)],
+    visual: { kind: "prototype", version: 1, at: T0, note: "v1", stale: false, thread: [], drawing: { since: T0, seq: 2 } },
+  });
+
+  // Left out: agent.since (status given), explore.at (known and new question), a bumped
+  // visual's at, the next draw's drawing.since, finished.at.
+  let t1 = Date.now();
+  applied(session, {
+    agent: { status: "waiting", handled: 3 },
+    questions: [
+      { id: "q1", explore: { rows } },
+      { id: "q3", round: 2, title: "New", rec: { text: "t", why: "w" }, explore: { rows } },
+    ],
+    visual: { version: 2, note: "v2: bigger", drawing: { seq: 3 } },
+    finished: { doc: "docs/x-design.md" },
+  });
+  let t2 = Date.now();
+  let st = stateOf(session);
+  stampedBetween(st.agent.since, t1, t2, "agent.since");
+  assert.equal(st.agent.status, "waiting");
+  assert.equal(st.agent.handled, 3);
+  stampedBetween(st.questions[0].explore.at, t1, t2, "q1.explore.at");
+  assert.deepEqual(st.questions[0].explore.rows, rows);
+  stampedBetween(st.questions[2].explore.at, t1, t2, "q3.explore.at (new question)");
+  stampedBetween(st.visual.at, t1, t2, "visual.at on a version bump");
+  assert.equal(st.visual.version, 2);
+  stampedBetween(st.visual.drawing.since, t1, t2, "visual.drawing.since");
+  assert.equal(st.visual.drawing.seq, 3);
+  stampedBetween(st.finished.at, t1, t2, "finished.at");
+  assert.equal(st.finished.doc, "docs/x-design.md");
+
+  // Given: every explicit time is kept as written.
+  const at = (m) => `2026-09-01T12:0${m}:00.000Z`;
+  applied(session, {
+    agent: { status: "working", since: at(1) },
+    questions: [{ id: "q2", explore: { at: at(2), rows } }],
+    visual: { version: 3, at: at(3), drawing: { since: at(4), seq: 4 } },
+    finished: { doc: "docs/x-design.md", visual: "docs/x-visual.html", at: at(5) },
+  });
+  st = stateOf(session);
+  assert.equal(st.agent.since, at(1));
+  assert.equal(st.questions[1].explore.at, at(2));
+  assert.equal(st.visual.at, at(3));
+  assert.equal(st.visual.drawing.since, at(4));
+  assert.equal(st.finished.at, at(5));
+
+  // Not asked for: no status, an unchanged version, no drawing, no explore → nothing restamped.
+  const before = stateOf(session);
+  applied(session, { agent: { handled: 5 }, visual: { version: 3, stale: true }, questions: [{ id: "q2", status: "deferred" }] });
+  st = stateOf(session);
+  assert.equal(st.agent.since, before.agent.since, "agent.since kept when the patch gives no status");
+  assert.equal(st.visual.at, before.visual.at, "visual.at kept when the version does not change");
+  assert.deepEqual(st.visual.drawing, before.visual.drawing, "drawing untouched");
+  assert.deepEqual(st.questions[1].explore, before.questions[1].explore, "explore untouched");
+  assert.deepEqual(st.finished, before.finished, "finished untouched");
+
+  // finished is still replaced whole: re-given without at, it is stamped anew.
+  t1 = Date.now();
+  applied(session, { finished: { doc: "docs/x-design.md", visual: "docs/x-visual.html" } });
+  t2 = Date.now();
+  stampedBetween(stateOf(session).finished.at, t1, t2, "finished.at when finished is re-given");
+});
+
+test("patch: null deletes a key at any level", () => {
+  const session = seeded({
+    note: "every branch settled",
+    questions: [qn("q1", 1, { status: "answered", answer: { kind: "accept" } }), qn("q2", 1)],
+    visual: { kind: "prototype", version: 3, at: T0, note: "v3", stale: false, drawing: { since: T0, seq: 5 }, queued: ["a"], thread: [] },
+  });
+  applied(session, { note: null, questions: [{ id: "q1", status: "reopened", answer: null }], visual: { drawing: null, queued: null } });
+  let st = stateOf(session);
+  assert.ok(!("note" in st));
+  assert.ok(!("answer" in st.questions[0]));
+  assert.equal(st.questions[0].status, "reopened");
+  assert.deepEqual(st.visual, { kind: "prototype", version: 3, at: T0, note: "v3", stale: false, thread: [] });
+  applied(session, { visual: null, note: "The draw failed; click Visualize to try again." });
+  st = stateOf(session);
+  assert.ok(!("visual" in st));
+  assert.equal(st.note, "The draw failed; click Visualize to try again.");
+});
+
+test("patch: terms are keyed by term; a known term is replaced whole, a new one appended", () => {
+  const session = seeded({ terms: [{ term: "round", def: "One turn of questions.", avoid: ["batch"] }, { term: "send", def: "One press.", avoid: [] }] });
+  applied(session, { terms: [{ term: "round", def: "The frontier of one turn." }, { term: "frontier", def: "Askable now.", avoid: ["queue"] }] });
+  assert.deepEqual(stateOf(session).terms, [
+    { term: "round", def: "The frontier of one turn." },
+    { term: "send", def: "One press.", avoid: [] },
+    { term: "frontier", def: "Askable now.", avoid: ["queue"] },
+  ]);
+  rejected(session, { terms: [{ def: "no term" }] }, /term/);
+});
+
+test("patch: invalid JSON, a failed validation, a bad shape, or a missing state.json exits non-zero with one stderr line and leaves state.json untouched", () => {
+  const session = seeded({ questions: [qn("q1", 1)] });
+  rejected(session, "{ nope", /JSON/);
+  rejected(session, "", /empty/);
+  rejected(session, "[1,2]", /object/);
+  rejected(session, '"just a string"', /object/);
+  rejected(session, { agent: { status: "sleeping" } }, /agent\.status/);
+  rejected(session, { agent: { handled: -1 } }, /agent\.handled/);
+  rejected(session, { agent: "waiting" }, /agent/);
+  rejected(session, { questions: null }, /questions/);
+  rejected(session, { questions: { id: "q1" } }, /questions/);
+  rejected(session, { questions: [{ id: "q1", status: "done" }] }, /q1.*status/);
+  rejected(session, { questions: [{ id: "q1", answer: { kind: "maybe" } }] }, /q1.*answer/);
+  rejected(session, { questions: [{ id: "q1", thread: [{ who: "bot", text: "hi" }] }] }, /q1.*thread/);
+  rejected(session, { visual: { kind: "painting" } }, /visual\.kind/);
+  rejected(session, { visual: { stale: true } }, /visual needs kind and version/);
+  rejected(session, { terms: "round" }, /terms/);
+
+  const empty = tmp("grill-nostate-");
+  const r = patch(empty, { note: "x" });
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /^grill: [^\n]*state\.json[^\n]*\n$/);
+  assert.deepEqual(readdirSync(empty), [], "nothing created");
+});
+
+test("patch: --file reads the patch from a file instead of stdin", () => {
+  const session = seeded({ questions: [qn("q1", 1)] });
+  const file = join(tmp("grill-pf-"), "patch.json");
+  writeFileSync(file, JSON.stringify({ agent: { handled: 7 }, questions: [{ id: "q1", status: "deferred" }] }));
+  const r = applied(session, undefined, ["--file", file]);
+  assert.equal(JSON.parse(r.out).handled, 7);
+  assert.equal(stateOf(session).questions[0].status, "deferred");
+  rejected(session, undefined, /no-such/, ["--file", join(tmp("grill-pf-"), "no-such.json")]);
+});
+
+test("patch round trip: new → patch round 1 → serve → POST /send → patch the handling → GET /state reflects it", async (t) => {
+  const { session } = newSession(tmp("grill-rt-"), "Round trip");
+  // The patches below are the SKILL.md shapes, with no times in them: the server stamps them.
+  const r1 = applied(session, {
+    agent: { status: "waiting" },
+    terms: [{ term: "send", def: "One press of Send to Agent.", avoid: ["submit"] }],
+    questions: [
+      { id: "q1", round: 1, title: "Storage", body: "Where state lives.", options: [{ k: "A", text: "Files" }, { k: "B", text: "SQLite" }], rec: { option: "A", why: "No dependency." } },
+      { id: "q2", round: 1, title: "Transport", body: "How the page talks.", options: [{ k: "A", text: "Polling" }, { k: "B", text: "SSE" }], rec: { option: "A", why: "Simplest." } },
+    ],
+  });
+  assert.deepEqual(JSON.parse(r1.out), { ok: true, questions: 2, open: 2, handled: 0, bytes: statSync(join(session, "state.json")).size });
+
+  const s = await startServe(session); t.after(s.stop);
+  let st = await (await fetch(s.ready.url + "state")).json();
+  assert.deepEqual(st.questions.map((q) => [q.id, q.status]), [["q1", "open"], ["q2", "open"]]);
+  assert.equal(st.agent.status, "waiting");
+
+  const actions = [{ q: "q1", type: "answer", kind: "accept" }, { q: "q2", type: "thread", text: "Why not SSE?" }];
+  assert.deepEqual(await (await post(s.ready.url, { actions })).json(), { ok: true, seq: 1 });
+  const ev = JSON.parse(await s.out.nth(2));
+
+  applied(session, { agent: { status: "working" } });
+  const working = (await (await fetch(s.ready.url + "state")).json()).agent;
+  assert.equal(working.status, "working");
+  assert.match(working.since, ISO);
+  assert.ok(Date.parse(working.since) >= Date.parse(ev.at), `agent.since (${working.since}) stamped when work began, after the send (${ev.at})`);
+
+  const r2 = applied(session, {
+    agent: { status: "waiting", handled: ev.seq },
+    questions: [
+      { id: "q1", status: "answered", answer: { kind: "accept" } },
+      { id: "q2", thread: [{ who: "user", text: "Why not SSE?", at: ev.at }, { who: "agent", text: "Polling survives a server restart with no reconnect logic." }] },
+      { id: "q3", round: 2, deps: ["q1"], title: "File layout", body: "With files settled in Q1.", options: [{ k: "A", text: "One folder" }], rec: { option: "A", why: "Easy to find." } },
+    ],
+  });
+  assert.deepEqual(JSON.parse(r2.out), { ok: true, questions: 3, open: 2, handled: 1, bytes: statSync(join(session, "state.json")).size });
+
+  st = await (await fetch(s.ready.url + "state")).json();
+  assert.deepEqual(st.agent.handled, 1);
+  assert.equal(st.agent.status, "waiting");
+  assert.ok(Date.parse(st.agent.since) >= Date.parse(working.since), "agent.since restamped when waiting began");
+  assert.deepEqual(st.questions.map((q) => [q.id, q.status, q.round]), [["q1", "answered", 1], ["q2", "open", 1], ["q3", "open", 2]]);
+  assert.deepEqual(st.questions[0].answer, { kind: "accept" });
+  assert.deepEqual(st.questions[1].thread.map((m) => m.who), ["user", "agent"]);
+  assert.match(st.questions[1].thread[1].at, ISO);
+  assert.equal(st.terms[0].term, "send");
+  assert.equal(run(["pending", "--session", session]), "", "nothing left to replay");
 });
