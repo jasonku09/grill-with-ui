@@ -132,12 +132,9 @@ node server.mjs url      --session DIR [--timeout S]           print the running
 node server.mjs patch    --session DIR [--file P]              apply a JSON patch (stdin or P) to state.json
 ```
 
-`patch` is the only way the agent writes `state.json`. The patch is shaped like the state:
-`null` deletes a key, `agent` and `visual` merge one level, questions merge by `id` (an
-unknown id with a `title` is a new question), threads and `visual.queued` append, terms
-merge by `term`, and anything else is replaced. The result is validated and swapped in
-atomically; a bad patch exits non-zero and leaves the file untouched. It prints one short
-summary line, never the state. The full rules are in `SKILL.md`.
+`patch` merges by the rules in `SKILL.md` ("Patching state.json"). A bad patch exits
+non-zero and leaves the file untouched; a good one prints one short summary line, never the
+state.
 
 `GRILL_HOME` overrides `~/.grill-with-ui`.
 
