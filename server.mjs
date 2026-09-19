@@ -243,6 +243,10 @@ class PatchError extends Error {}
 const bad = (msg) => { throw new PatchError(msg); };
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const oneLine = (s) => String(s).replace(/\s+/g, " ").trim();
+const fieldsOf = (p, where) => {
+  if (Object.hasOwn(p, "__proto__")) bad(`"__proto__" in ${where} is not a state.json field`);
+  return Object.entries(p);
+};
 // A value written whole carries no null-valued keys: null means "delete" everywhere.
 const clean = (v) => (Array.isArray(v) ? v.map(clean)
   : isObj(v) ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== null).map(([k, x]) => [k, clean(x)])) : v);
@@ -295,7 +299,7 @@ function appendTo(current, added, where) {
 function mergeOne(current, p, where, appends = []) {
   if (!isObj(p)) bad(`${where} in a patch must be an object`);
   const out = isObj(current) ? { ...current } : {};
-  for (const [k, v] of Object.entries(p)) {
+  for (const [k, v] of fieldsOf(p, where)) {
     if (v === null) delete out[k];
     else if (appends.includes(k)) out[k] = appendTo(out[k], v, `${where}.${k}`);
     else out[k] = clean(v);
@@ -336,7 +340,7 @@ function patchTerms(current, list) {
 function applyPatch(state, p, now) {
   if (!isObj(p)) bad("the patch must be a JSON object shaped like state.json");
   const out = { ...state };
-  for (const [k, v] of Object.entries(stampTimes(p, state, now))) {
+  for (const [k, v] of fieldsOf(stampTimes(p, state, now), "the patch")) {
     if (v === null) delete out[k];
     else if (k === "agent") out.agent = mergeOne(out.agent, v, "agent");
     else if (k === "visual") out.visual = mergeOne(out.visual, v, "visual", VISUAL_APPENDS);

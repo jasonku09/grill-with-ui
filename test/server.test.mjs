@@ -473,6 +473,10 @@ test("patch: invalid JSON, a failed validation, a bad shape, or a missing state.
   rejected(session, { visual: { kind: "painting" } }, /visual\.kind/);
   rejected(session, { visual: { stale: true } }, /visual needs kind and version/);
   rejected(session, { terms: "round" }, /terms/);
+  rejected(session, '{"questions":null,"__proto__":{"questions":[]}}', /__proto__.*the patch/);
+  rejected(session, '{"agent":{"status":null,"__proto__":{"status":"waiting"}}}', /__proto__.*agent/);
+  rejected(session, '{"questions":[{"id":"q1","status":null,"__proto__":{"status":"open"}}]}', /__proto__.*q1/);
+  rejected(session, '{"questions":[{"id":"q9","round":2,"title":"t","rec":{"why":"w"},"__proto__":{"status":"answered"}}]}', /__proto__.*q9/);
 
   const empty = tmp("grill-nostate-");
   const r = patch(empty, { note: "x" });
