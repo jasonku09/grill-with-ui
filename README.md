@@ -7,6 +7,17 @@ any single one in its own thread without losing the rest of the session, and pre
 button, **Send to Agent**, to ship everything you staged as a single turn. At the end the
 agent writes an exhaustive design doc for the topic.
 
+![A grill in progress: the recommended option accepted on one question, a question asked in
+another one's discussion thread, both shipped with one Send, the agent's reply and next round
+of questions arriving, a pros and cons table from Explore deeper, a prototype of the design
+from Visualize, and that prototype redrawn after one note of feedback](docs/demo.gif)
+
+Above: a recommendation accepted on Q3 and a question asked on Q4 go to the agent as one Send,
+and its reply opens the next round. Then one click on **Explore deeper** lays out the pros and
+cons of Q6's options, **Visualize** draws the design so far as a prototype, and one note in its
+feedback thread redraws it as v2 with the change asked for. Recorded against a real session by
+[`design/record-demo.mjs`](design/record-demo.mjs).
+
 Under the hood it is small on purpose: one Node script and one HTML file, no dependencies,
 no build step. The agent owns `state.json` and changes it only through
 `node server.mjs patch`, sending just what changed as a small JSON patch that the script
@@ -119,6 +130,8 @@ every worktree of a repo sees the same sessions; outside git it is the working d
 
 In this repo: `server.mjs` (the server and CLI), `page.html` (the page), `SKILL.md` (the
 prompt the agent follows), `test/`, and `design/` + `docs/design.md` (how it was designed).
+`design/record-demo.mjs` re-records the GIF above by driving the real page; it needs
+Playwright and `ffmpeg`.
 
 ## Server commands
 
