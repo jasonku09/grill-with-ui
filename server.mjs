@@ -459,8 +459,10 @@ function cmdPatch(o) {
   try { state = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { die(`state.json in ${session} is not valid JSON, so it was not patched: ${oneLine(e.message)}`); }
   let next;
   try { next = applyPatch(state, p, new Date().toISOString()); validateState(next); } catch (e) {
-    if (e instanceof PatchError) die(`patch rejected (state.json unchanged): ${oneLine(e.message)}`);
-    throw e;
+    // Every failure owes the caller one line, never a stack trace: an error the merge never
+    // expected (a patch nested deep enough to overflow clean, say) reports the same way.
+    die(e instanceof PatchError ? `patch rejected (state.json unchanged): ${oneLine(e.message)}`
+      : `could not apply the patch (state.json unchanged): ${oneLine(e.message)}`);
   }
   let bytes;
   try { bytes = writeJson(file, next); } catch (e) { die(`could not write state.json: ${e.code || oneLine(e.message)}`, 1); }

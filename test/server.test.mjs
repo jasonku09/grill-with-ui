@@ -485,6 +485,15 @@ test("patch: invalid JSON, a failed validation, a bad shape, or a missing state.
   assert.deepEqual(readdirSync(empty), [], "nothing created");
 });
 
+test("patch: an error the merge never expected keeps the contract — one grill: line, exit 2, state.json untouched", () => {
+  const session = seeded({ questions: [qn("q1", 1)] });
+  // Deep nesting overflows the stack in the recursive clean, which is a RangeError, not a
+  // PatchError (3000 levels is already enough here; 20000 is far past it and still runs in ms).
+  const deep = `{"extra":${"[".repeat(20000)}${"]".repeat(20000)}}`;
+  const r = rejected(session, deep, /state\.json unchanged/);
+  assert.equal(r.code, 2, "the same exit code as every other rejection");
+});
+
 test("patch: every field the page renders must have the shape the render reads, or the patch is rejected", () => {
   const session = seeded({
     terms: [{ term: "round", def: "One turn of questions.", avoid: ["batch"] }],
