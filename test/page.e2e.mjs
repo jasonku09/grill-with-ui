@@ -123,8 +123,35 @@ try {
 
   check("header has a Visualize button before any visual exists", await page.locator("header #visualize").count() === 1 && (await page.locator("#visualize").textContent()) === "Visualize" && await page.locator("body.visualize").count() === 0);
 
+  // Discussion scroll. The panel is rebuilt on every render, so it used to snap back to the
+  // top of a long thread on each send. q1 is answered with nothing staged on it, so its thread
+  // can be watched across the send that ships q3's and q4's staging.
+  s0.questions[0].thread = s0.questions[0].thread.concat(Array.from({ length: 22 }, (_, i) =>
+    ({ who: i % 2 ? "agent" : "user", text: `Back and forth ${i + 1}. Long enough to take a couple of lines in the panel.`, at: now })));
+  writeState(s0);
+  await page.locator(".item", { hasText: "Q1" }).click();
+  await page.waitForFunction(() => document.querySelectorAll("aside .msgs .msg").length === 24, null, { timeout: 5000 });
+  const msgs = page.locator("aside .msgs");
+  const scrollPos = () => msgs.evaluate((el) => ({ top: el.scrollTop, room: el.scrollHeight - el.clientHeight }));
+  check("a long thread overflows the discussion panel", (await scrollPos()).room > 200);
+  await msgs.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  const wasAtBottom = await scrollPos();
+
   await page.locator("#send").click();
   await page.waitForFunction(() => document.getElementById("staged-list").textContent.includes("Sent #2"));
+  let pos = await scrollPos();
+  check("a send keeps a thread that was at the bottom at the bottom", wasAtBottom.top > 200 && pos.room - pos.top <= 32, JSON.stringify(pos));
+  await msgs.evaluate((el) => (el.scrollTop = 120));
+  s0.questions[0].thread.push({ who: "agent", text: "One more reply while you were reading.", at: now });
+  writeState(s0);
+  await page.waitForFunction(() => document.querySelectorAll("aside .msgs .msg").length === 25, null, { timeout: 5000 });
+  pos = await scrollPos();
+  check("a reply landing mid-thread keeps the place you were reading", Math.abs(pos.top - 120) <= 2, JSON.stringify(pos));
+  await page.locator(".item", { hasText: "Q3" }).click();
+  await page.locator(".item", { hasText: "Q1" }).click();
+  check("another question's thread starts at the top, not where the last one sat", (await scrollPos()).top === 0);
+  await page.locator(".item", { hasText: "Q4" }).click();
+
   const ev = JSON.parse(await srv.nth(3));
   check("events.jsonl line has 3 actions", ev.seq === 2 && ev.actions.length === 3, JSON.stringify(ev.actions));
   const kinds = ev.actions.map((a) => `${a.q}:${a.type}${a.kind ? ":" + a.kind : ""}${a.option ? ":" + a.option : ""}`).sort();

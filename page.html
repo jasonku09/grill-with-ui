@@ -376,12 +376,28 @@ async function explore(id) {
 }
 
 // ---- rendering ----
-function render() { withInputs(() => { document.body.classList.toggle("visualize", activeView() === "visualize"); renderBanner(); renderHeader(); renderNav(); renderMain(); renderVisual(); renderAside(); renderFooter(); }); }
+function render() { withThreadScroll(() => withInputs(() => { document.body.classList.toggle("visualize", activeView() === "visualize"); renderBanner(); renderHeader(); renderNav(); renderMain(); renderVisual(); renderAside(); renderFooter(); })); }
 function tick() { renderStatus(); renderSend(); }
 function withInputs(fn) {
   const act = document.activeElement; const keep = act && act.tagName === "TEXTAREA" ? { id: act.id, s: act.selectionStart, e: act.selectionEnd } : null;
   fn();
   if (keep) { const el = $(keep.id); if (el) { el.focus(); try { el.setSelectionRange(keep.s, keep.e); } catch {} } }
+}
+// Every render replaces the discussion panel with a fresh element, and a fresh element starts
+// at scrollTop 0: a send, or the agent's reply landing, used to throw you back to the top of a
+// long thread. Put the panel back where it was. One that was already at the bottom stays at the
+// bottom so new messages arrive in view; a panel now showing another question (or the visual's
+// feedback) starts at the top, as a thread you have not read yet should.
+const BOTTOM_SLACK = 32; // px from the bottom that still counts as following the thread
+const threadKey = () => (activeView() === "visualize" ? "visual" : "q:" + (selected || ""));
+let shownThread = null;
+function withThreadScroll(fn) {
+  const el = $("aside").querySelector(".msgs");
+  const was = el && { key: shownThread, top: el.scrollTop, bottom: el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK };
+  fn();
+  shownThread = threadKey();
+  const now = $("aside").querySelector(".msgs");
+  if (now && was && was.key === shownThread) now.scrollTop = was.bottom ? now.scrollHeight : was.top;
 }
 function renderBanner() {
   const b = $("banner");
