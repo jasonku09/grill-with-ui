@@ -472,5 +472,7 @@ function cmdPatch(o) {
 }
 
 const o = parseArgs(process.argv.slice(2));
-({ new: cmdNew, serve: cmdServe, sessions: cmdSessions, pending: cmdPending, wait: cmdWait, url: cmdUrl, patch: cmdPatch }[o._[0]]
-  || (() => die("usage: server.mjs new|serve|sessions|pending|wait|url|patch [--session DIR] ...")))(o);
+const cmds = { new: cmdNew, serve: cmdServe, sessions: cmdSessions, pending: cmdPending, wait: cmdWait, url: cmdUrl, patch: cmdPatch };
+// own keys only: `toString` and friends are inherited, not subcommands
+(Object.hasOwn(cmds, o._[0] ?? "") ? cmds[o._[0]]
+  : () => die("usage: server.mjs new|serve|sessions|pending|wait|url|patch [--session DIR] ..."))(o);

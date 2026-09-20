@@ -490,7 +490,7 @@ test("patch: an error the merge never expected keeps the contract — one grill:
   // Deep nesting overflows the stack in the recursive clean, which is a RangeError, not a
   // PatchError (3000 levels is already enough here; 20000 is far past it and still runs in ms).
   const deep = `{"extra":${"[".repeat(20000)}${"]".repeat(20000)}}`;
-  const r = rejected(session, deep, /state\.json unchanged/);
+  const r = rejected(session, deep, /could not apply the patch \(state\.json unchanged\)/);
   assert.equal(r.code, 2, "the same exit code as every other rejection");
 });
 
@@ -630,4 +630,13 @@ test("patch round trip: new → patch round 1 → serve → POST /send → patch
   assert.match(st.questions[1].thread[1].at, ISO);
   assert.equal(st.terms[0].term, "send");
   assert.equal(run(["pending", "--session", session]), "", "nothing left to replay");
+});
+
+test("cli: an unknown subcommand prints usage and exits 2, including inherited names like toString", () => {
+  for (const name of ["bogus", "toString", "__proto__", "constructor"]) {
+    const r = spawnSync(process.execPath, [SERVER, name], { encoding: "utf8", env });
+    assert.equal(r.status, 2, `${name} must exit 2`);
+    assert.equal(r.stdout, "", `${name} must print nothing on stdout`);
+    assert.match(r.stderr, /^grill: usage: server\.mjs [^\n]+\n$/, `${name} must print one usage line`);
+  }
 });
