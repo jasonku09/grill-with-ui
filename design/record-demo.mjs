@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
 const out = resolve(process.argv[2] || join(repo, "docs", "demo.gif"));
+try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); }
+catch { console.error("ffmpeg is not on PATH; this script needs it to assemble the GIF."); process.exit(1); }
 const { chromium } = await import(process.env.PLAYWRIGHT_PKG || "@playwright/test");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -182,10 +184,11 @@ const prototype = (copyInList) => `<!doctype html>
 
 // ---- session + server ----
 const home = mkdtempSync(join(tmpdir(), "grill-demo-home-"));
+const proj = mkdtempSync(join(tmpdir(), "grill-demo-proj-"));
 const env = { ...process.env, GRILL_HOME: home };
 const SERVER = join(repo, "server.mjs");
 const { session } = JSON.parse(execFileSync(process.execPath, [SERVER, "new", "--topic", "demo", "--doc", "docs/demo.md"],
-  { encoding: "utf8", env, cwd: mkdtempSync(join(tmpdir(), "grill-demo-proj-")) }));
+  { encoding: "utf8", env, cwd: proj }));
 const stateFile = join(session, "state.json");
 const created = JSON.parse(readFileSync(stateFile, "utf8")).created;
 const write = (s) => writeFileSync(stateFile, JSON.stringify({ ...s, project: "~/Projects/notes", created }, null, 2));
@@ -193,7 +196,16 @@ const write = (s) => writeFileSync(stateFile, JSON.stringify({ ...s, project: "~
 write(base({ questions: [...round1, ...round2] }));
 
 const child = spawn(process.execPath, [SERVER, "serve", "--session", session], { env, stdio: ["ignore", "pipe", "inherit"] });
-const url = await new Promise((res) => child.stdout.once("data", (d) => res(JSON.parse(String(d).split("\n")[0]).url)));
+const url = await new Promise((res) => {
+  let buf = "";
+  const onData = (d) => {
+    buf += d; const i = buf.indexOf("\n");
+    if (i < 0) return;
+    child.stdout.off("data", onData);
+    res(JSON.parse(buf.slice(0, i)).url);
+  };
+  child.stdout.on("data", onData);
+});
 
 // ---- the page, with a drawn cursor so clicks are legible ----
 const browser = await chromium.launch();
@@ -240,92 +252,96 @@ let seq = 0;
 const waiting = () => ({ status: "waiting", since: new Date().toISOString(), handled: seq });
 
 try {
-  await sleep(1000);                                                   // the page as the agent leaves it
+  try {
+    await sleep(1000);                                                   // the page as the agent leaves it
 
-  await click(page.locator(".opt.rec"));                               // accept the recommendation
-  await sleep(900);
+    await click(page.locator(".opt.rec"));                               // accept the recommendation
+    await sleep(900);
 
-  await click(page.locator(".item", { hasText: "Q4" }));               // move to the next question
-  await sleep(700);
+    await click(page.locator(".item", { hasText: "Q4" }));               // move to the next question
+    await sleep(700);
 
-  await click(page.locator("#thread-in"));                             // ask about it in its own thread
-  await page.locator("#thread-in").pressSequentially(QUESTION, { delay: 38 });
-  await sleep(500);
-  await click(page.locator("#stage-thread"));
-  await sleep(800);
+    await click(page.locator("#thread-in"));                             // ask about it in its own thread
+    await page.locator("#thread-in").pressSequentially(QUESTION, { delay: 38 });
+    await sleep(500);
+    await click(page.locator("#stage-thread"));
+    await sleep(800);
 
-  await click(page.locator("#send"));                                  // one send ships both
-  seq = 1;
-  await sleep(700);
+    await click(page.locator("#send"));                                  // one send ships both
+    seq = 1;
+    await sleep(700);
 
-  write(base({ questions: [...round1, ...round2], agent: { status: "working", since: new Date().toISOString(), handled: 0 } }));
-  await sleep(2400);                                                   // the agent reads and answers
+    write(base({ questions: [...round1, ...round2], agent: { status: "working", since: new Date().toISOString(), handled: 0 } }));
+    await sleep(2400);                                                   // the agent reads and answers
 
-  const answered = JSON.parse(JSON.stringify(round2));
-  answered[0].status = "answered"; answered[0].answer = { kind: "accept", option: "B" };
-  answered[1].thread = [{ who: "user", text: QUESTION, at: now }, { who: "agent", text: REPLY, at: now }];
-  const state = base({
-    questions: [...round1, ...answered, ...round3],
-    agent: waiting(),
-    note: "Q6 comes straight out of your question on Q4.",
-  });
-  write(state);
-  await sleep(2200);                                                   // the reply and the new round land
+    const answered = JSON.parse(JSON.stringify(round2));
+    answered[0].status = "answered"; answered[0].answer = { kind: "accept", option: "B" };
+    answered[1].thread = [{ who: "user", text: QUESTION, at: now }, { who: "agent", text: REPLY, at: now }];
+    const state = base({
+      questions: [...round1, ...answered, ...round3],
+      agent: waiting(),
+      note: "Q6 comes straight out of your question on Q4.",
+    });
+    write(state);
+    await sleep(2200);                                                   // the reply and the new round land
 
-  await click(page.locator(".item", { hasText: "Q6" }));               // on to the round it opened
-  await sleep(1100);
+    await click(page.locator(".item", { hasText: "Q6" }));               // on to the round it opened
+    await sleep(1100);
 
-  await click(page.locator("#explore"));                               // one click, its own turn
-  seq = 2;
-  await sleep(1400);
-  state.questions.find((q) => q.id === "q6").explore = { at: new Date().toISOString(), rows: EXPLORE };
-  state.agent = waiting();
-  write(state);
-  await sleep(2400);                                                   // pros and cons fill the panel
+    await click(page.locator("#explore"));                               // one click, its own turn
+    seq = 2;
+    await sleep(1400);
+    state.questions.find((q) => q.id === "q6").explore = { at: new Date().toISOString(), rows: EXPLORE };
+    state.agent = waiting();
+    write(state);
+    await sleep(2400);                                                   // pros and cons fill the panel
 
-  await click(page.locator("#visualize"));                             // one picture of the design so far
-  seq = 3;
-  await sleep(900);
-  state.visual = { kind: "prototype", version: 0, thread: [], stale: false, drawing: { since: new Date().toISOString(), seq } };
-  state.agent = waiting();
-  write(state);
-  await sleep(2200);                                                   // acknowledged; a subagent draws it in the background
+    await click(page.locator("#visualize"));                             // one picture of the design so far
+    seq = 3;
+    await sleep(900);
+    state.visual = { kind: "prototype", version: 0, thread: [], stale: false, drawing: { since: new Date().toISOString(), seq } };
+    state.agent = waiting();
+    write(state);
+    await sleep(2200);                                                   // acknowledged; a subagent draws it in the background
 
-  writeFileSync(join(session, "visual.html"), prototype(false));
-  state.visual = { kind: "prototype", version: 1, at: new Date().toISOString(), note: "v1: conflict copy kept beside the note, queued edits marked in the list", thread: [], stale: false };
-  write(state);
-  await sleep(2400);                                                   // it lands and the view flips by itself
+    writeFileSync(join(session, "visual.html"), prototype(false));
+    state.visual = { kind: "prototype", version: 1, at: new Date().toISOString(), note: "v1: conflict copy kept beside the note, queued edits marked in the list", thread: [], stale: false };
+    write(state);
+    await sleep(2400);                                                   // it lands and the view flips by itself
 
-  await click(page.locator("#feedback-in"));                           // say what is missing from the picture
-  await page.locator("#feedback-in").pressSequentially(FEEDBACK, { delay: 38 });
-  await sleep(400);
-  await click(page.locator("#stage-feedback"));
-  await sleep(800);
+    await click(page.locator("#feedback-in"));                           // say what is missing from the picture
+    await page.locator("#feedback-in").pressSequentially(FEEDBACK, { delay: 38 });
+    await sleep(400);
+    await click(page.locator("#stage-feedback"));
+    await sleep(800);
 
-  await click(page.locator("#send"));                                  // feedback ships like any other send
-  seq = 4;
-  await sleep(700);
-  state.visual.thread = [{ who: "user", text: FEEDBACK, at: new Date().toISOString() }, { who: "agent", text: REDRAW, at: new Date().toISOString() }];
-  state.visual.drawing = { since: new Date().toISOString(), seq };
-  state.agent = waiting();
-  write(state);
-  await sleep(2400);                                                   // answered at once, redrawn in the background
+    await click(page.locator("#send"));                                  // feedback ships like any other send
+    seq = 4;
+    await sleep(700);
+    state.visual.thread = [{ who: "user", text: FEEDBACK, at: new Date().toISOString() }, { who: "agent", text: REDRAW, at: new Date().toISOString() }];
+    state.visual.drawing = { since: new Date().toISOString(), seq };
+    state.agent = waiting();
+    write(state);
+    await sleep(2400);                                                   // answered at once, redrawn in the background
 
-  writeFileSync(join(session, "visual.html"), prototype(true));
-  state.visual = { kind: "prototype", version: 2, at: new Date().toISOString(), note: "v2: the conflict copy is a row in the list", thread: state.visual.thread, stale: false };
-  write(state);
-  await sleep(3200);                                                   // v2 lands in place, the note under the note
+    writeFileSync(join(session, "visual.html"), prototype(true));
+    state.visual = { kind: "prototype", version: 2, at: new Date().toISOString(), note: "v2: the conflict copy is a row in the list", thread: state.visual.thread, stale: false };
+    write(state);
+    await sleep(3200);                                                   // v2 lands in place, the note under the note
+  } finally {
+    rolling = false;
+    await roll;
+    await browser.close();
+    child.kill();
+  }
+
+  // ---- assemble ----
+  mkdirSync(dirname(out), { recursive: true });
+  const vf = `fps=${FPS},scale=1024:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle`;
+  execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-framerate", String(FPS), "-i", join(frames, "f%04d.png"), "-filter_complex", vf, "-loop", "0", out]);
 } finally {
-  rolling = false;
-  await roll;
-  await browser.close();
-  child.kill();
+  rmSync(frames, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
+  rmSync(proj, { recursive: true, force: true });
 }
-
-// ---- assemble ----
-mkdirSync(dirname(out), { recursive: true });
-const vf = `fps=${FPS},scale=1024:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle`;
-execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-framerate", String(FPS), "-i", join(frames, "f%04d.png"), "-filter_complex", vf, "-loop", "0", out]);
-rmSync(frames, { recursive: true, force: true });
-rmSync(home, { recursive: true, force: true });
 console.log(`${out} · ${n} frames · ${(n / FPS).toFixed(1)}s`);

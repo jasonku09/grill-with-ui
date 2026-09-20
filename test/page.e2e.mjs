@@ -123,16 +123,48 @@ try {
 
   check("header has a Visualize button before any visual exists", await page.locator("header #visualize").count() === 1 && (await page.locator("#visualize").textContent()) === "Visualize" && await page.locator("body.visualize").count() === 0);
 
-  // Discussion scroll. The panel is rebuilt on every render, so it used to snap back to the
-  // top of a long thread on each send. q1 is answered with nothing staged on it, so its thread
-  // can be watched across the send that ships q3's and q4's staging.
+  // Discussion scroll, first on a panel that cannot scroll at all: nothing there is "at the
+  // bottom", so long content arriving is read from its first line. The pros and cons table is
+  // the sharp case, because it renders above the thread rather than after it.
+  await page.locator(".item", { hasText: "Q1" }).click();
+  const msgs = page.locator("aside .msgs");
+  const scrollPos = () => msgs.evaluate((el) => ({ top: el.scrollTop, room: el.scrollHeight - el.clientHeight }));
+  const beforeTable = await scrollPos();
+  s0.questions[0].explore = { at: now, rows: Array.from({ length: 8 }, (_, i) => ({
+    option: String.fromCharCode(65 + i),
+    pros: [1, 2, 3].map((k) => `Pro ${k} for option ${i + 1}, long enough to wrap in the panel.`),
+    cons: [1, 2, 3].map((k) => `Con ${k} for option ${i + 1}, long enough to wrap in the panel.`),
+  })) };
+  writeState(s0);
+  await page.waitForFunction(() => document.querySelectorAll("aside .msgs table.procon tbody tr").length === 8, null, { timeout: 5000 });
+  const tablePos = await scrollPos();
+  const headInView = await msgs.evaluate((el) => {
+    const h = el.querySelector(".explore-head"); if (!h) return false;
+    const box = el.getBoundingClientRect(), head = h.getBoundingClientRect();
+    return head.top >= box.top - 1 && head.bottom <= box.bottom + 1;
+  });
+  check("an explore table landing in a short thread stays in view, not scrolled off the top",
+    beforeTable.room === 0 && tablePos.room > 200 && tablePos.top === 0 && headInView,
+    JSON.stringify({ beforeTable, tablePos, headInView }));
+
+  await page.locator(".item", { hasText: "Q4" }).click();
+  const beforeReply = await scrollPos();
+  s0.questions[3].thread = [{ who: "agent", text: Array.from({ length: 40 }, (_, i) => `Line ${i + 1} of a reply taller than the panel it lands in.`).join("\n"), at: now }];
+  writeState(s0);
+  await page.waitForFunction(() => document.querySelectorAll("aside .msgs .msg").length === 1, null, { timeout: 5000 });
+  const replyPos = await scrollPos();
+  check("a long reply landing in a short thread leaves the panel at its first line",
+    beforeReply.room === 0 && replyPos.room > 200 && replyPos.top === 0,
+    JSON.stringify({ beforeReply, replyPos }));
+
+  // Then on one that does scroll: the panel is rebuilt on every render, so it used to snap back
+  // to the top of a long thread on each send. q1 is answered with nothing staged on it, so its
+  // thread can be watched across the send that ships q3's and q4's staging.
   s0.questions[0].thread = s0.questions[0].thread.concat(Array.from({ length: 22 }, (_, i) =>
     ({ who: i % 2 ? "agent" : "user", text: `Back and forth ${i + 1}. Long enough to take a couple of lines in the panel.`, at: now })));
   writeState(s0);
   await page.locator(".item", { hasText: "Q1" }).click();
   await page.waitForFunction(() => document.querySelectorAll("aside .msgs .msg").length === 24, null, { timeout: 5000 });
-  const msgs = page.locator("aside .msgs");
-  const scrollPos = () => msgs.evaluate((el) => ({ top: el.scrollTop, room: el.scrollHeight - el.clientHeight }));
   check("a long thread overflows the discussion panel", (await scrollPos()).room > 200);
   await msgs.evaluate((el) => (el.scrollTop = el.scrollHeight));
   const wasAtBottom = await scrollPos();

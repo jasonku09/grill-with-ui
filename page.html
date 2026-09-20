@@ -385,15 +385,20 @@ function withInputs(fn) {
 }
 // Every render replaces the discussion panel with a fresh element, and a fresh element starts
 // at scrollTop 0: a send, or the agent's reply landing, used to throw you back to the top of a
-// long thread. Put the panel back where it was. One that was already at the bottom stays at the
-// bottom so new messages arrive in view; a panel now showing another question (or the visual's
-// feedback) starts at the top, as a thread you have not read yet should.
+// long thread. Put the panel back where it was. One that could scroll and sat at the bottom
+// stays at the bottom so new messages arrive in view; a panel now showing another question, the
+// visual's feedback, or a pros and cons table it did not have before starts at the top, as
+// something you have not read yet should.
 const BOTTOM_SLACK = 32; // px from the bottom that still counts as following the thread
-const threadKey = () => (activeView() === "visualize" ? "visual" : "q:" + (selected || ""));
+const threadKey = () => {
+  if (activeView() === "visualize") return "visual";
+  const q = byId(selected);
+  return "q:" + (selected || "") + (q && q.explore ? "|x" + (q.explore.at || "") : "");
+};
 let shownThread = null;
 function withThreadScroll(fn) {
   const el = $("aside").querySelector(".msgs");
-  const was = el && { key: shownThread, top: el.scrollTop, bottom: el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK };
+  const was = el && { key: shownThread, top: el.scrollTop, bottom: el.scrollHeight > el.clientHeight + BOTTOM_SLACK && el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK };
   fn();
   shownThread = threadKey();
   const now = $("aside").querySelector(".msgs");
