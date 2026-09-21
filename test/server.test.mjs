@@ -133,12 +133,22 @@ test("wait: blocks for a seq newer than --after (default: current last), prints 
   assert.equal(wo.lines.length, 1);
   assert.equal(JSON.parse(wo.lines[0]).seq, 2);
 
-  const w2 = spawn(process.execPath, [SERVER, "wait", "--session", session, "--timeout", "5"], { env, stdio: ["ignore", "pipe", "inherit"] });
+  // The default --after latches the last seq on disk as the process starts, so a send that
+  // lands while node is still booting counts as already-seen and this wait blocks on it.
+  // Sleeping before the post bets on cold-start time and loses that bet on a loaded machine.
+  // Post until the wait answers instead, and assert on what it printed rather than on how
+  // many tries it took.
+  const w2 = spawn(process.execPath, [SERVER, "wait", "--session", session, "--timeout", "20"], { env, stdio: ["ignore", "pipe", "inherit"] });
   const wo2 = lineReader(w2.stdout);
-  await sleep(300);
-  await post(s.ready.url, { actions: [{ q: "q1", type: "reopen" }] });
-  assert.equal(await new Promise((res) => w2.on("exit", res)), 0);
-  assert.equal(JSON.parse(wo2.lines[0]).seq, 3, "default --after skips everything already on disk");
+  const exited2 = new Promise((res) => w2.on("exit", res));
+  for (let i = 0; i < 40 && !wo2.lines.length; i++) {
+    await post(s.ready.url, { actions: [{ q: "q1", type: "reopen" }] });
+    await sleep(250);
+  }
+  assert.equal(await exited2, 0);
+  const seen2 = JSON.parse(wo2.lines[0]);
+  assert.ok(seen2.seq > 2, `default --after skips everything already on disk (printed seq ${seen2.seq})`);
+  assert.equal(seen2.actions[0].type, "reopen", "and prints a send that arrived after it started");
 
   const w3 = spawn(process.execPath, [SERVER, "wait", "--session", session, "--timeout", "0.5"], { env, stdio: ["ignore", "pipe", "inherit"] });
   const wo3 = lineReader(w3.stdout);
