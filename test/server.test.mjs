@@ -141,7 +141,7 @@ test("wait: blocks for a seq newer than --after (default: current last), prints 
   const w2 = spawn(process.execPath, [SERVER, "wait", "--session", session, "--timeout", "20"], { env, stdio: ["ignore", "pipe", "inherit"] });
   const wo2 = lineReader(w2.stdout);
   const exited2 = new Promise((res) => w2.on("exit", res));
-  for (let i = 0; i < 40 && !wo2.lines.length; i++) {
+  for (let i = 0; i < 80 && !wo2.lines.length; i++) {
     await post(s.ready.url, { actions: [{ q: "q1", type: "reopen" }] });
     await sleep(250);
   }

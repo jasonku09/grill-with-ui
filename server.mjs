@@ -206,6 +206,9 @@ function cmdServe(o) {
 function cmdWait(o) {
   const session = mustSession(o);
   const events = path.join(session, "events.jsonl");
+  // No --after: everything already on disk counts as seen, snapshotted here at startup. A send
+  // that lands while this process is still booting is therefore waited past rather than
+  // returned, which is why wait mode passes --after <agent.handled> explicitly.
   const after = o.after !== undefined && o.after !== true ? Number(o.after) : lastSeq(events);
   const deadline = Date.now() + Number(o.timeout !== undefined && o.timeout !== true ? o.timeout : 480) * 1000;
   const tick = () => {
