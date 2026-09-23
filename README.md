@@ -121,11 +121,13 @@ and the page tab you still have open reconnects on its own.
 Session state lives outside your repo, so there is nothing to gitignore:
 
 ```
-~/.grill-with-ui/sessions/<project-key>/<YYYYMMDD-HHMMSS>/
-  state.json     written only by the agent, through `patch` (questions, recommendations, threads, status)
-  events.jsonl   appended only by the page, one line per Send
-  server.json    url, port and pid of the running server
-  visual.html    the prototype or diagram, drawn by the agent's subagent, served at /visual
+~/.grill-with-ui/
+  ui.json        global UI prefs shared by every grill (theme)
+  sessions/<project-key>/<YYYYMMDD-HHMMSS>/
+    state.json     written only by the agent, through `patch` (questions, recommendations, threads, status)
+    events.jsonl   appended only by the page, one line per Send
+    server.json    url, port and pid of the running server
+    visual.html    the prototype or diagram, drawn by the agent's subagent, served at /visual
 ```
 
 `<project-key>` is the git common root of the project with slashes turned into dashes, so

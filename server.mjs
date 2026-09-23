@@ -17,6 +17,7 @@
 // Files (per session folder): state.json  — written only by the agent, through `patch`
 //                             events.jsonl — appended only by this server, one line per Send
 //                             server.json  — url, port, pid of the running server
+// Files (global, under GRILL_HOME): ui.json — UI prefs shared by every grill (theme)
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -27,6 +28,12 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = process.env.GRILL_HOME || path.join(os.homedir(), ".grill-with-ui");
+// ui.json is global, not per session: the theme must survive a new grill on a new port.
+const THEMES = ["system", "light", "dark"];
+const uiFile = path.join(HOME, "ui.json");
+const readTheme = () => {
+  try { const t = JSON.parse(fs.readFileSync(uiFile, "utf8")).theme; return THEMES.includes(t) ? t : "system"; } catch { return "system"; }
+};
 
 function parseArgs(argv) {
   const o = { _: [] };
@@ -146,10 +153,18 @@ function cmdServe(o) {
   const send = (res, code, body, type) => { res.writeHead(code, { "content-type": type, "cache-control": "no-store" }); res.end(body); };
   const json = (res, code, obj) => send(res, code, JSON.stringify(obj), "application/json");
   const readBody = (req) => new Promise((resolve) => { let b = ""; req.on("data", (c) => { b += c; }); req.on("end", () => resolve(b)); });
+  // Browsers set Origin on every POST, same-origin or not; reject a mismatch so another tab (or
+  // the sandboxed visual iframe, whose Origin is "null") can't forge a request. No Origin at all —
+  // curl, wait mode, this project's own tests — is still allowed. http://localhost:<port> is this
+  // same server, so that spelling passes too.
+  const originOk = (req) => { const o = req.headers.origin; return o === undefined || selfOrigins.includes(o); };
 
   const srv = http.createServer(async (req, res) => {
     const { pathname } = new URL(req.url, "http://x");
-    if (req.method === "GET" && pathname === "/") return send(res, 200, fs.readFileSync(page), "text/html; charset=utf-8");
+    if (req.method === "GET" && pathname === "/") {
+      const html = fs.readFileSync(page, "utf8").replace("__GRILL_THEME__", readTheme());
+      return send(res, 200, html, "text/html; charset=utf-8");
+    }
     if (req.method === "GET" && pathname === "/state") {
       // `patch` swaps state.json in atomically, but a hand-written file can be caught mid-write:
       // then serve the last parse that worked.
@@ -164,12 +179,7 @@ function cmdServe(o) {
       return send(res, 200, fs.readFileSync(visual), "text/html; charset=utf-8");
     }
     if (req.method === "POST" && pathname === "/send") {
-      // Browsers set Origin on every POST, same-origin or not; reject a mismatch so another
-      // tab (or the sandboxed visual iframe, whose Origin is "null") can't forge a send. No
-      // Origin at all — curl, wait mode, this project's own tests — is still allowed. The page
-      // opened as http://localhost:<port> is this same server, so that spelling passes too.
-      const origin = req.headers.origin;
-      if (origin !== undefined && !selfOrigins.includes(origin)) return json(res, 403, { error: "cross-origin request rejected" });
+      if (!originOk(req)) return json(res, 403, { error: "cross-origin request rejected" });
       let parsed;
       try { parsed = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "body must be JSON" }); }
       if (!parsed || !Array.isArray(parsed.actions) || parsed.actions.length === 0) return json(res, 400, { error: "actions must be a non-empty array" });
@@ -177,6 +187,14 @@ function cmdServe(o) {
       fs.appendFileSync(events, line + "\n");
       process.stdout.write(line + "\n"); // this is what wakes the agent
       return json(res, 200, { ok: true, seq });
+    }
+    if (req.method === "POST" && pathname === "/theme") {
+      if (!originOk(req)) return json(res, 403, { error: "cross-origin request rejected" });
+      let t;
+      try { t = JSON.parse(await readBody(req)).theme; } catch {}
+      if (!THEMES.includes(t)) return json(res, 400, { error: "theme must be system, light or dark" });
+      writeJson(uiFile, { theme: t });
+      return json(res, 200, { ok: true });
     }
     json(res, 404, { error: "not found" });
   });

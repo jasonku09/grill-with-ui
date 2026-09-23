@@ -1,16 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="__GRILL_THEME__">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>grill</title>
 <style>
   :root {
-    --bg: #f7f4ee; --panel: #ffffff; --ink: #1f1c18; --ink-2: #625b51; --ink-3: #9a9285;
-    --rule: #e6e0d4; --accent: #9a3a26; --ok: #3d6b4a; --ok-soft: #e3eee5; --stage: #b8791f; --stage-soft: #f8ecd2; --warn-soft: #fbe9e4;
+    color-scheme: light dark;
+    --bg: light-dark(#f7f4ee, #16130f); --panel: light-dark(#ffffff, #1e1a15); --ink: light-dark(#1f1c18, #ece7dd);
+    --ink-2: light-dark(#625b51, #b3aa9c); --ink-3: light-dark(#9a9285, #7d7568); --rule: light-dark(#e6e0d4, #322c24); --hover: light-dark(#efebe3, #2a241d);
+    --accent: light-dark(#9a3a26, #e0785c); --ok: light-dark(#3d6b4a, #7fb08d); --ok-soft: light-dark(#e3eee5, #1f2b22); --ok-deep: light-dark(#2f5a3b, #6ea07c); --ok-pulse: light-dark(#7fb08d, #a9d6b6);
+    --stage: light-dark(#b8791f, #d9a441); --stage-soft: light-dark(#f8ecd2, #2e2616); --warn-soft: light-dark(#fbe9e4, #38211b);
     --serif: "Iowan Old Style", Charter, Georgia, serif;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -38,6 +43,9 @@
   #progress::after { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; background: var(--stage); animation: slide 1.4s ease-in-out infinite; }
   @keyframes slide { from { left: -30%; } to { left: 100%; } }
   #terms-toggle, #visualize { font-size: 12px; padding: 4px 10px; }
+  #theme-toggle { display: inline-flex; align-items: center; padding: 4px 8px; }
+  #theme-toggle svg { display: none; width: 15px; height: 15px; }
+  #theme-toggle[data-mode="system"] .i-system, #theme-toggle[data-mode="light"] .i-light, #theme-toggle[data-mode="dark"] .i-dark { display: block; }
   #visualize .spin { width: 9px; height: 9px; margin-right: 4px; }
   #visualize:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); }
   #terms { display: none; position: absolute; right: 24px; top: 100%; width: 420px; max-height: 60vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 16px; box-shadow: 0 8px 24px rgba(0,0,0,.08); z-index: 5; }
@@ -50,7 +58,7 @@
   nav .round { padding: 16px 20px 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); display: flex; justify-content: space-between; }
   nav .round.current { color: var(--accent); }
   .item { display: grid; grid-template-columns: 30px 1fr auto; gap: 8px; align-items: baseline; padding: 8px 20px; cursor: pointer; }
-  .item:hover { background: #efebe3; }
+  .item:hover { background: var(--hover); }
   .item.selected { background: var(--panel); box-shadow: inset 3px 0 0 var(--accent); }
   .item .id { font-size: 12px; color: var(--ink-3); }
   .item .t { font-size: 14px; }
@@ -70,7 +78,7 @@
   #visual-strip .right { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--stage); }
   #visual-strip a { color: var(--ink-3); text-decoration: none; font-size: 13px; } #visual-strip a:hover { color: var(--accent); }
   #visual-frame { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
-  #visual-wait { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: var(--ink-3); font-size: 14px; background: #fff; }
+  #visual-wait { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: var(--ink-3); font-size: 14px; background: var(--panel); }
   #visual-wait[hidden], #visual-frame[hidden] { display: none; }
 
   main { grid-row: 3; grid-column: 2; overflow-y: auto; padding: 36px 44px 60px; background: var(--panel); }
@@ -138,8 +146,8 @@
   footer { grid-row: 4; grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 24px; border-top: 1px solid var(--rule); background: var(--panel); }
   footer .staged-list { font-size: 13px; color: var(--ink-2); flex: 1; } footer .staged-list b { color: var(--stage); } footer .staged-list .sent { color: var(--stage); display: inline-flex; align-items: center; gap: 6px; }
   #finish.ready { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 600; animation: ready 1.2s ease-in-out infinite; }
-  #finish.ready:hover { background: #2f5a3b; border-color: #2f5a3b; }
-  @keyframes ready { 0%, 100% { background-color: var(--ok); border-color: var(--ok); } 50% { background-color: #7fb08d; border-color: #7fb08d; } }
+  #finish.ready:hover { background: var(--ok-deep); border-color: var(--ok-deep); }
+  @keyframes ready { 0%, 100% { background-color: var(--ok); border-color: var(--ok); } 50% { background-color: var(--ok-pulse); border-color: var(--ok-pulse); } }
   footer .hint { font-size: 12px; color: var(--ink-3); } footer .warn { font-size: 12px; color: var(--accent); }
   footer .confirm { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; }
   #finish:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); animation: none; } #finish .spin { margin-right: 4px; }
@@ -214,6 +222,11 @@
   <div id="terms"></div>
   <button id="visualize" type="button" hidden>Visualize</button>
   <span class="status"><span class="dot" id="agent-dot"></span><span id="agent-status">connecting…</span></span>
+  <button id="theme-toggle" type="button" data-mode="system">
+    <svg class="i-system" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.7a6.3 6.3 0 0 1 0 12.6z" fill="currentColor"/></svg>
+    <svg class="i-light" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3 3l1.3 1.3M11.7 11.7L13 13M13 3l-1.3 1.3M4.3 11.7L3 13"/></g></svg>
+    <svg class="i-dark" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.5A6 6 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+  </button>
   <div id="progress"></div>
 </header>
 <nav id="nav"><div class="empty">Connecting…</div></nav>
@@ -624,6 +637,21 @@ function renderSend() {
 $("send").onclick = send;
 $("visualize").onclick = () => { if (hasVisual()) { local.view = activeView() === "visualize" ? "questions" : "visualize"; commit(); } else visualize(); };
 $("terms-toggle").onclick = () => $("terms").classList.toggle("show");
+// ---- theme: data-theme forces light/dark; "system" follows the OS via light-dark() ----
+const THEMES = ["system", "light", "dark"];
+let theme = document.documentElement.dataset.theme || "system";
+const applyTheme = () => {
+  document.documentElement.dataset.theme = theme;
+  const b = $("theme-toggle");
+  b.dataset.mode = theme;
+  b.title = b.ariaLabel = `Theme: ${theme} — click to change`;
+};
+$("theme-toggle").onclick = () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  applyTheme();
+  fetch("/theme", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ theme }) }).catch(() => {});
+};
+applyTheme();
 document.addEventListener("click", (e) => { if (!e.target.closest("#terms") && !e.target.closest("#terms-toggle")) $("terms").classList.remove("show"); });
 document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send(); });
 poll();
