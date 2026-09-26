@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // grill-with-ui server. Plain Node, no dependencies, no build step.
 //
-//   new      --topic T [--doc P]                    create a session folder under GRILL_HOME, print {session,key,project,id,doc}
+//   new      --topic T [--intent I] [--doc P]         create a session folder under GRILL_HOME, print {session,key,project,id,doc,intent}
 //   serve    --session DIR [--port N]               serve the page; append each Send to events.jsonl AND print the same
 //                                                   line to stdout (this process is the agent's Monitor command).
 //                                                   Without --port it retries the port it used last time, then falls
@@ -79,11 +79,13 @@ function cmdNew(o) {
   fs.mkdirSync(session);
   const now = new Date().toISOString();
   writeJson(path.join(session, "state.json"), {
-    topic: typeof o.topic === "string" ? o.topic : "", doc: typeof o.doc === "string" ? o.doc : "",
+    topic: typeof o.topic === "string" ? o.topic : "",
+    intent: typeof o.intent === "string" ? o.intent : "",
+    doc: typeof o.doc === "string" ? o.doc : "",
     project, created: now, agent: { status: "working", since: now }, terms: [], questions: [],
   });
   fs.writeFileSync(path.join(session, "events.jsonl"), "");
-  print({ session, key, project, id: path.basename(session), doc: typeof o.doc === "string" ? o.doc : "" });
+  print({ session, key, project, id: path.basename(session), doc: typeof o.doc === "string" ? o.doc : "", intent: typeof o.intent === "string" ? o.intent : "" });
 }
 
 // ---- events.jsonl helpers ----
@@ -113,7 +115,7 @@ function cmdSessions(o) {
     if (!st) continue;
     const qs = Array.isArray(st.questions) ? st.questions : [];
     rows.push({
-      session, id, topic: st.topic || "", created: st.created || "", finished: st.finished || null,
+      session, id, topic: st.topic || "", intent: st.intent || "", doc: st.doc || "", created: st.created || "", finished: st.finished || null,
       open: qs.filter(isOpen).length, answered: qs.filter((q) => q.status === "answered").length,
       handled: Number(st.agent && st.agent.handled) || 0, lastSeq: lastSeq(path.join(session, "events.jsonl")),
     });
@@ -382,7 +384,7 @@ function validateState(s) {
     list.forEach((m, i) => need(isObj(m) && (m.who === "user" || m.who === "agent") && str(m.text) && (m.at === undefined || str(m.at)),
       `${where}[${i}] must be {"who":"user"|"agent","text":"…","at":"ISO"}`));
   };
-  for (const k of ["topic", "doc", "project", "created", "note"]) check(s, k, str, `${k} must be a string`);
+  for (const k of ["topic", "intent", "doc", "project", "created", "note"]) check(s, k, str, `${k} must be a string`);
   if ("finished" in s) {
     need(isObj(s.finished), 'finished must be an object ({"doc","visual","at"})');
     texts(s.finished, ["doc", "visual", "at"], "finished");

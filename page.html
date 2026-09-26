@@ -23,9 +23,13 @@
   #banner { grid-row: 1; grid-column: 1 / -1; display: none; padding: 9px 24px; font-size: 14px; background: var(--warn-soft); color: var(--accent); border-bottom: 1px solid var(--rule); }
   #banner.show { display: block; } #banner.done { background: var(--ok-soft); color: var(--ok); }
 
-  header { grid-row: 2; grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 24px; border-bottom: 1px solid var(--rule); background: var(--panel); position: relative; }
+  header { grid-row: 2; grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; padding: 12px 24px; border-bottom: 1px solid var(--rule); background: var(--panel); position: relative; }
   header h1 { font-family: var(--serif); font-weight: 500; font-size: 20px; margin: 0; }
   header .path { color: var(--ink-3); font-size: 13px; }
+  #intent { display: none; flex-basis: 100%; order: 10; font-size: 14px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #intent.show { display: block; }
+  #intent.show.open { white-space: normal; }
+  #intent.show.clamped { cursor: pointer; }
   header .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); } header .status .spin { color: var(--stage); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
   .dot.working { background: var(--stage); animation: pulse 1.2s ease-in-out infinite; }
@@ -210,6 +214,7 @@
 <header>
   <h1 id="topic">grill</h1>
   <span class="path" id="doc-path"></span>
+  <span id="intent"></span>
   <button id="terms-toggle" type="button">Terms</button>
   <div id="terms"></div>
   <button id="visualize" type="button" hidden>Visualize</button>
@@ -238,7 +243,7 @@ const GONE_AFTER_MS = 3000;
 const CHECK = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="10" fill="currentColor"/><path d="M6 10.4l2.6 2.6L14 7.4" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 let S = null, raw = null, selected = null, storeKey = null;
-let lastOk = Date.now(), gone = false, confirmFinish = false;
+let lastOk = Date.now(), gone = false, confirmFinish = false, intentOpen = false;
 let local = fresh();
 function fresh() { return { staged: {}, pending: [], drafts: {}, view: "questions", vfeedback: [] }; }
 function load() { local = fresh(); try { const v = localStorage.getItem(storeKey); if (v) local = Object.assign(fresh(), JSON.parse(v)); } catch {} }
@@ -412,9 +417,17 @@ function renderBanner() {
 }
 function renderHeader() {
   if (!S) return;
-  document.title = "grill · " + (S.topic || "");
+  const intent = typeof S.intent === "string" ? S.intent.trim() : "";
+  document.title = intent ? "grill · " + (S.topic || "") + " — " + intent.slice(0, 80) : "grill · " + (S.topic || "");
   $("topic").textContent = S.topic || "grill";
   $("doc-path").textContent = S.doc || "";
+  const intentEl = $("intent");
+  if (intent) {
+    intentEl.textContent = intent; intentEl.title = intent; intentEl.classList.add("show");
+    intentEl.classList.toggle("open", intentOpen);
+    intentEl.classList.toggle("clamped", !intentOpen && intentEl.scrollWidth > intentEl.clientWidth);
+  }
+  else { intentEl.textContent = ""; intentEl.title = ""; intentEl.classList.remove("show", "open", "clamped"); intentOpen = false; }
   const terms = Array.isArray(S.terms) ? S.terms : [];
   $("terms-toggle").textContent = `Terms${terms.length ? " · " + terms.length : ""}`;
   $("terms").innerHTML = terms.length
@@ -622,6 +635,7 @@ function renderSend() {
 }
 
 $("send").onclick = send;
+$("intent").onclick = () => { if ($("intent").classList.contains("show")) { intentOpen = !intentOpen; render(); } };
 $("visualize").onclick = () => { if (hasVisual()) { local.view = activeView() === "visualize" ? "questions" : "visualize"; commit(); } else visualize(); };
 $("terms-toggle").onclick = () => $("terms").classList.toggle("show");
 document.addEventListener("click", (e) => { if (!e.target.closest("#terms") && !e.target.closest("#terms-toggle")) $("terms").classList.remove("show"); });

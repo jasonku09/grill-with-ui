@@ -217,12 +217,31 @@ test("sessions: lists this project's sessions newest first, unfinished by defaul
 
   const lines = run(["sessions"], { cwd }).split("\n").map((l) => JSON.parse(l));
   assert.deepEqual(lines.map((l) => l.session), [b.session, a.session]);
-  assert.deepEqual(lines[0], { session: b.session, id: b.id, topic: "Second topic", created: sb.created, finished: null, open: 2, answered: 1, handled: 2, lastSeq: 3 });
-  assert.deepEqual(lines[1], { session: a.session, id: a.id, topic: "First topic", created: stateOf(a.session).created, finished: null, open: 0, answered: 0, handled: 0, lastSeq: 0 });
+  assert.deepEqual(lines[0], { session: b.session, id: b.id, topic: "Second topic", intent: "", doc: "", created: sb.created, finished: null, open: 2, answered: 1, handled: 2, lastSeq: 3 });
+  assert.deepEqual(lines[1], { session: a.session, id: a.id, topic: "First topic", intent: "", doc: "", created: stateOf(a.session).created, finished: null, open: 0, answered: 0, handled: 0, lastSeq: 0 });
   const all = run(["sessions", "--all"], { cwd }).split("\n").map((l) => JSON.parse(l));
   assert.deepEqual(all.map((l) => l.session), [c.session, b.session, a.session]);
   assert.deepEqual(all[0].finished, { doc: "docs/x.md", at: "y" });
   assert.equal(run(["sessions"], { cwd: tmp("grill-empty-") }), "");
+});
+
+test("new --intent is stored and listed; patch replaces it whole; non-string intent is rejected", () => {
+  const cwd = tmp("grill-intent-");
+  const out = JSON.parse(run(["new", "--topic", "Auth", "--intent", "Decide how sessions remember a user across tabs", "--doc", "docs/auth-design.md"], { cwd }));
+  assert.equal(out.intent, "Decide how sessions remember a user across tabs");
+  const st = JSON.parse(readFileSync(join(out.session, "state.json"), "utf8"));
+  assert.equal(st.intent, "Decide how sessions remember a user across tabs");
+  const lines = run(["sessions"], { cwd }).split("\n").map((l) => JSON.parse(l));
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].intent, "Decide how sessions remember a user across tabs");
+  assert.equal(lines[0].doc, "docs/auth-design.md");
+
+  const session = seeded({ questions: [qn("q1", 1)] });
+  applied(session, { intent: "A clearer why for this grill" });
+  assert.equal(stateOf(session).intent, "A clearer why for this grill");
+  applied(session, { intent: null });
+  assert.ok(!("intent" in stateOf(session)));
+  rejected(session, { intent: 12 }, /intent/);
 });
 
 test("pending: prints the events past agent.handled, nothing when caught up", async (t) => {
