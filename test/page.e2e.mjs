@@ -65,6 +65,28 @@ try {
   check("system fonts only (no Google Fonts link)", (await page.content()).includes("fonts.googleapis") === false);
   const geo = await page.evaluate(() => { const r = (sel) => document.querySelector(sel).getBoundingClientRect(); return { main: r("main"), footer: r("footer"), h: innerHeight }; });
   check("layout fills the viewport (content row stretches, footer sits at the bottom)", Math.abs(geo.footer.bottom - geo.h) < 2 && Math.abs(geo.main.bottom - geo.footer.top) < 2 && geo.main.height > 600, JSON.stringify(geo));
+  check("no intent line when the session has none", await page.locator("#intent.show").count() === 0);
+  check("tab title is topic-only without intent", (await page.title()) === "grill · E2E topic");
+  const withIntent = fixture(); withIntent.intent = "Decide how sessions remember a user across tabs"; writeState(withIntent);
+  await page.waitForFunction(() => document.getElementById("intent").classList.contains("show"));
+  check("intent line shows under the topic", (await page.locator("#intent.show").textContent()) === "Decide how sessions remember a user across tabs");
+  check("tab title carries the intent", (await page.title()) === "grill · E2E topic — Decide how sessions remember a user across tabs");
+  writeState(fixture());
+  await page.waitForFunction(() => !document.getElementById("intent").classList.contains("show"));
+  check("clearing intent hides the line again", await page.locator("#intent.show").count() === 0);
+  const long = fixture();
+  long.intent = "Decide whether guests check out without an account. If not, settle where the account gets created. Returns and support need an account either way, so the follow-up settles ownership and the retry path stays idempotent across both flows.";
+  writeState(long);
+  await page.waitForFunction(() => document.getElementById("intent").classList.contains("clamped"));
+  check("long intent clamps to one line with a pointer", await page.locator("#intent.show.clamped").count() === 1);
+  await page.locator("#intent.show").click();
+  await page.waitForFunction(() => document.getElementById("intent").classList.contains("open"));
+  check("click expands the full intent", (await page.locator("#intent.show.open").textContent()) === long.intent);
+  await page.locator("#intent.show").click();
+  await page.waitForFunction(() => !document.getElementById("intent").classList.contains("open"));
+  check("click collapses back to one line", await page.locator("#intent.show.clamped").count() === 1);
+  writeState(fixture());
+  await page.waitForFunction(() => !document.getElementById("intent").classList.contains("show"));
 
   await page.locator("#terms-toggle").click();
   check("terms panel shows the term and its avoid list", (await page.locator("#terms").textContent()).includes("Avoid: submit, reply"));
