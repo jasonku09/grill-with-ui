@@ -143,6 +143,10 @@
   footer .staged-list { font-size: 13px; color: var(--ink-2); flex: 1; } footer .staged-list b { color: var(--stage); } footer .staged-list .sent { color: var(--stage); display: inline-flex; align-items: center; gap: 6px; }
   #finish.ready { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 600; animation: ready 1.2s ease-in-out infinite; }
   #finish.ready:hover { background: #2f5a3b; border-color: #2f5a3b; }
+  /* The inline confirm keeps the green so the eye stays on it, but stops blinking:
+     blinking means "you can act", solid green means "confirm here". */
+  #finish-yes.ready { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 600; }
+  #finish-yes.ready:hover { background: #2f5a3b; border-color: #2f5a3b; }
   @keyframes ready { 0%, 100% { background-color: var(--ok); border-color: var(--ok); } 50% { background-color: #7fb08d; border-color: #7fb08d; } }
   footer .hint { font-size: 12px; color: var(--ink-3); } footer .warn { font-size: 12px; color: var(--accent); }
   footer .confirm { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; }
@@ -617,7 +621,7 @@ function renderFooter() {
   const fa = $("finish-area");
   if (locked()) fa.innerHTML = "";
   else if (isFinishing()) fa.innerHTML = `<button id="finish" type="button" disabled><span class="spin"></span>Finishing…</button>`;
-  else if (confirmFinish) fa.innerHTML = `<span class="confirm">Finish this grill? Everything staged goes with it; the agent writes the design doc and stops. <button id="finish-yes" type="button">Finish</button><button id="finish-no" type="button">Cancel</button></span>`;
+  else if (confirmFinish) fa.innerHTML = `<span class="confirm">Finish this grill? Everything staged goes with it; the agent writes the design doc and stops. <button id="finish-yes" class="ready" type="button">Finish grill</button><button id="finish-no" type="button">Cancel</button></span>`;
   else {
     const a = (S && S.agent) || {}; const gate = sendState(false);
     const ready = allSettled() && a.status !== "working" && !lp && !gone;

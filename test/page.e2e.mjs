@@ -352,6 +352,8 @@ try {
   await page.locator("#thread-in").fill("final note"); await page.locator("#stage-thread").click();
   await page.locator("#finish").click();
   check("inline confirm shown", await page.locator("#finish-yes").count() === 1);
+  check("confirm keeps the green but stops blinking", await page.locator("#finish-yes.ready").count() === 1
+    && (await page.locator("#finish-yes").evaluate((el) => getComputedStyle(el).animationName)) === "none");
   await page.locator("#finish-no").click();
   check("cancel keeps the finish button", await page.locator("#finish").count() === 1 && await page.locator("#finish-yes").count() === 0);
   await page.locator("#finish").click(); await page.locator("#finish-yes").click();
