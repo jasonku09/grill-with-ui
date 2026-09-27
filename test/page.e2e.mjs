@@ -100,6 +100,19 @@ try {
   await page.locator("#thread-in").fill("Would Alpha be simpler?");
   await page.locator("#stage-thread").click();
   check("staged count 2", (await page.locator("#send").textContent()) === "Send 2 to Agent");
+  // ⌘↩ in a compose box stages the draft; a second ⌘↩ sends it (issue #12)
+  await page.locator(".item", { hasText: "Q4" }).click();
+  await page.locator("#free").fill("Short and sweet");
+  await page.locator("#free").press("Meta+Enter");
+  check("cmd+enter stages free text", (await page.locator(".staged-line").textContent()).includes("Short and sweet") && (await page.locator("#send").textContent()) === "Send 3 to Agent");
+  await page.locator("#clear-staged").click();
+  check("clear removes the staged text", await page.locator(".staged-line").count() === 0 && (await page.locator("#send").textContent()) === "Send 2 to Agent");
+  await page.locator(".item", { hasText: "Q3" }).click();
+  await page.locator("#thread-in").fill("Keyboard staged thread");
+  await page.locator("#thread-in").press("Meta+Enter");
+  check("cmd+enter stages a discussion message", await page.locator("aside .msg.staged").count() === 2 && (await page.locator("#send").textContent()) === "Send 3 to Agent");
+  await page.locator("aside .msg.staged [data-rm]").last().click();
+  check("staged thread removed again", await page.locator("aside .msg.staged").count() === 1 && (await page.locator("#send").textContent()) === "Send 2 to Agent");
   await page.locator("#explore").click();
   const exploreEv = JSON.parse(await srv.nth(2));
   check("explore sends immediately as its own event", exploreEv.seq === 1 && JSON.stringify(exploreEv.actions) === JSON.stringify([{ q: "q3", type: "explore" }]), JSON.stringify(exploreEv.actions));

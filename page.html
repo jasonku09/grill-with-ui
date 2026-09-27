@@ -533,7 +533,7 @@ function renderMain() {
   const controls = lk ? "" : `
       <div class="answer-row">
         <textarea id="free" placeholder="${q.status === "answered" ? "Change your answer, or add nuance…" : (q.options || []).length ? "Free-text answer, if none of the options fit…" : "Your answer…"}">${esc(d.free || "")}</textarea>
-        <button id="stage-text" type="button">Stage text</button>
+        <button id="stage-text" type="button" title="Stage text (⌘↩)">Stage text</button>
       </div>
       <div class="links">${isOpen(q) ? `<a href="#" id="defer">Defer this question</a>` : `<a href="#" id="reopen">Reopen this question</a>`}</div>`;
   const exploring = isExploring(q.id);
@@ -580,7 +580,7 @@ function renderAside() {
   aside.innerHTML = `
     <div class="head"><h3>Discussion</h3><div class="sub">${esc(q.id).toUpperCase()} · ${esc(q.title)}<span class="count">${thread.length} message${thread.length === 1 ? "" : "s"}</span></div></div>
     <div class="msgs">${explore}${msgs || (explore ? "" : `<div class="empty-thread">Nothing yet. Ask anything about this question; the agent answers here on the next send.</div>`)}</div>
-    ${lk ? "" : `<div class="compose"><textarea id="thread-in" placeholder="Dig deeper on ${esc(q.id).toUpperCase()}…">${esc(d.thread || "")}</textarea><button id="stage-thread" type="button">Add to discussion</button></div>`}`;
+    ${lk ? "" : `<div class="compose"><textarea id="thread-in" placeholder="Dig deeper on ${esc(q.id).toUpperCase()}…">${esc(d.thread || "")}</textarea><button id="stage-thread" type="button" title="Stage message (⌘↩)">Add to discussion</button></div>`}`;
   aside.querySelectorAll("[data-rm]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); removeThread(q.id, Number(a.dataset.rm)); }));
   if (lk) return;
   $("stage-thread").onclick = () => { const t = $("thread-in").value.trim(); if (t) stageThread(q.id, t); };
@@ -595,7 +595,7 @@ function renderFeedback(aside) {
   aside.innerHTML = `
     <div class="head"><h3>Visual feedback</h3><div class="sub">${v.kind === "diagram" ? "Diagram" : "Prototype"} · v${esc(v.version)}<span class="count">${thread.length} message${thread.length === 1 ? "" : "s"}</span></div></div>
     <div class="msgs">${msgs || `<div class="empty-thread">Nothing yet. Say what is wrong or missing in the visual; the agent redraws it on the next send. If a note contradicts an answered question, that question is reopened for you.</div>`}</div>
-    ${lk ? "" : `<div class="compose"><textarea id="feedback-in" placeholder="Feedback on the visual…">${esc(d.thread || "")}</textarea><button id="stage-feedback" type="button">Add feedback</button></div>`}`;
+    ${lk ? "" : `<div class="compose"><textarea id="feedback-in" placeholder="Feedback on the visual…">${esc(d.thread || "")}</textarea><button id="stage-feedback" type="button" title="Stage feedback (⌘↩)">Add feedback</button></div>`}`;
   aside.querySelectorAll("[data-rmf]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); removeFeedback(Number(a.dataset.rmf)); }));
   if (lk) return;
   $("stage-feedback").onclick = () => { const t = $("feedback-in").value.trim(); if (t) stageFeedback(t); };
@@ -639,7 +639,20 @@ $("intent").onclick = () => { if ($("intent").classList.contains("show")) { inte
 $("visualize").onclick = () => { if (hasVisual()) { local.view = activeView() === "visualize" ? "questions" : "visualize"; commit(); } else visualize(); };
 $("terms-toggle").onclick = () => $("terms").classList.toggle("show");
 document.addEventListener("click", (e) => { if (!e.target.closest("#terms") && !e.target.closest("#terms-toggle")) $("terms").classList.remove("show"); });
-document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send(); });
+document.addEventListener("keydown", (e) => {
+  if (!((e.metaKey || e.ctrlKey) && e.key === "Enter")) return;
+  // First press in a compose box stages the draft so a second press can send it.
+  if (!locked()) {
+    const act = document.activeElement;
+    const t = act && typeof act.value === "string" ? act.value.trim() : "";
+    if (t) {
+      if (act.id === "thread-in") { const q = byId(selected); if (q) { e.preventDefault(); stageThread(q.id, t); return; } }
+      if (act.id === "free") { const q = byId(selected); if (q) { e.preventDefault(); (local.drafts[q.id] = local.drafts[q.id] || {}).free = ""; stageAnswer(q.id, { kind: "text", text: t }); return; } }
+      if (act.id === "feedback-in") { e.preventDefault(); stageFeedback(t); return; }
+    }
+  }
+  send();
+});
 poll();
 </script>
 </body>
