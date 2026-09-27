@@ -2,9 +2,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -686,4 +686,68 @@ test("cli: an unknown subcommand prints usage and exits 2, including inherited n
     assert.equal(r.stdout, "", `${name} must print nothing on stdout`);
     assert.match(r.stderr, /^grill: usage: server\.mjs [^\n]+\n$/, `${name} must print one usage line`);
   }
+});
+
+test("serve: loopback by default — no lanUrl in ready or server.json, url prints one line", async (t) => {
+  const { session } = newSession(tmp("grill-loop-"));
+  const s = await startServe(session); t.after(s.stop);
+  assert.ok(!("lanUrl" in s.ready), "no LAN URL promised when listening on loopback only");
+  const info = JSON.parse(readFileSync(join(session, "server.json"), "utf8"));
+  assert.ok(!("lanUrl" in info));
+  assert.equal(info.host, "127.0.0.1");
+  assert.equal(run(["url", "--session", session]), s.ready.url);
+});
+
+test("serve --lan: ready and server.json carry a LAN URL next to localhost; the LAN origin is accepted", async (t) => {
+  const lan = Object.values(networkInterfaces()).flat().find((a) => a && a.family === "IPv4" && !a.internal);
+  if (!lan) { t.skip("no LAN IPv4 interface on this machine"); return; }
+  const { session } = newSession(tmp("grill-lan-"));
+  const s = await startServe(session, ["--lan"]); t.after(s.stop);
+  assert.match(s.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/, "the primary URL stays localhost");
+  assert.match(s.ready.lanUrl, new RegExp(`^http://${lan.address.replace(/\./g, "\\.")}:\\d+/$`));
+  const info = JSON.parse(readFileSync(join(session, "server.json"), "utf8"));
+  assert.equal(info.lanUrl, s.ready.lanUrl);
+  assert.equal(info.host, "0.0.0.0");
+
+  assert.equal((await fetch(s.ready.url + "state")).status, 200, "localhost still serves");
+  assert.equal((await fetch(s.ready.lanUrl + "state")).status, 200, "the LAN URL serves too");
+  const actions = [{ q: "q1", type: "defer" }];
+  const sendAs = (base, origin) => fetch(base + "send", { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ actions }) });
+  assert.equal((await sendAs(s.ready.lanUrl, s.ready.lanUrl.slice(0, -1))).status, 200, "the LAN origin is accepted");
+  assert.equal((await sendAs(s.ready.url, "https://evil.example")).status, 403, "a foreign origin is still rejected");
+  await s.out.nth(2);
+
+  assert.deepEqual(run(["url", "--session", session, "--all"]).split("\n"), [s.ready.url, s.ready.lanUrl], "url --all prints both");
+  assert.equal(run(["url", "--session", session]), s.ready.url, "plain url still prints one line");
+});
+
+test("serve: --lan with --host, and --open with --open-command, are rejected with one stderr line", () => {
+  const { session } = newSession(tmp("grill-flag-"));
+  for (const extra of [["--lan", "--host", "127.0.0.1"], ["--lan", "--host"], ["--host"], ["--open", "--open-command", "true"]]) {
+    const r = spawnSync(process.execPath, [SERVER, "serve", "--session", session, ...extra], { encoding: "utf8", env });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.stdout, "", "nothing on stdout when the flags conflict");
+    assert.match(r.stderr, /^grill: [^\n]+\n$/, "exactly one grill: line on stderr");
+  }
+});
+
+test("serve --open-command: the program runs with the live URL and the stdout protocol is untouched", async (t) => {
+  const dir = tmp("grill-open-");
+  const seen = join(dir, "opened.txt");
+  const probe = join(dir, "probe.mjs");
+  writeFileSync(probe, `#!/usr/bin/env node\nimport { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(seen)}, process.argv[2] + "\\n");\n`);
+  chmodSync(probe, 0o755);
+  const { session } = newSession(dir);
+  const s = await startServe(session, ["--open-command", probe]); t.after(s.stop);
+  assert.match(s.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+
+  await post(s.ready.url, { actions: [{ q: "q1", type: "defer" }] });
+  assert.equal(JSON.parse(await s.out.nth(2)).seq, 1, "stdout still carries ready then sends, nothing else");
+  if (process.platform === "win32") return; // shebang probes do not execute there; the protocol asserts above are the portable part
+  let got = "";
+  for (let i = 0; i < 40 && !got; i++) {
+    await sleep(250);
+    try { got = readFileSync(seen, "utf8").trim(); } catch { /* probe has not run yet */ }
+  }
+  assert.equal(got, s.ready.url, "the program received the live URL as its argument");
 });

@@ -115,8 +115,15 @@ GRILL_PATCH
    `node $SKILL/server.mjs serve --session <session>`, description `grill page: <topic>`.
    No Monitor tool in your harness (Codex, Gemini CLI, Cursor, Copilot, others)? Use
    "Wait mode" at the end of this file for this step and for every wait after it.
-4. Run `node $SKILL/server.mjs url --session <session>`; it prints the URL.
-5. Print ONE line: the URL, how many questions wait, and the doc path (say the user can change
+   Two opt-in flags change how the page is reached, never whether the grill runs:
+   `--lan` listens on the LAN interface and prints a LAN URL next to the localhost one
+   (for answering from a second machine on the same network; without it no LAN socket
+   opens and no LAN URL prints), and `--open` attempts to open the live page in a
+   browser (best effort: a missing opener leaves the printed URL and a manual
+   instruction, and setup never depends on it).
+4. Run `node $SKILL/server.mjs url --session <session>`; it prints the URL
+   (`--all` also prints the LAN URL when the server exposes one).
+5. Print ONE line: the URL (both URLs with `--lan`), how many questions wait, and the doc path (say the user can change
    the path by typing in the terminal). Return to listening.
 
 ## Resume (`/grill-with-ui resume`)
