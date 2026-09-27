@@ -117,6 +117,25 @@ test("serve: /send rejects a mismatched Origin, allows same-origin and no-Origin
   assert.equal(readFileSync(join(session, "events.jsonl"), "utf8").trim().split("\n").length, 3, "only the three accepted sends landed");
 });
 
+test("theme: POST /theme persists globally, is injected into every grill's page, and is origin-guarded", async (t) => {
+  const a = await startServe(newSession(tmp("grill-t1-")).session); t.after(a.stop);
+  const b = await startServe(newSession(tmp("grill-t2-")).session); t.after(b.stop);
+  assert.notEqual(new URL(a.ready.url).port, new URL(b.ready.url).port, "two grills on two ports");
+
+  const themeOf = async (url) => (await (await fetch(url)).text()).match(/<html[^>]*data-theme="([^"]+)"/)[1];
+  assert.equal(await themeOf(a.ready.url), "system", "defaults to system");
+  const setTheme = (url, theme, origin) =>
+    fetch(url + "theme", { method: "POST", headers: { "content-type": "application/json", ...(origin ? { origin } : {}) }, body: JSON.stringify({ theme }) });
+
+  assert.equal((await setTheme(a.ready.url, "dark")).status, 200);
+  assert.equal(await themeOf(a.ready.url), "dark", "the grill that set it sees it");
+  assert.equal(await themeOf(b.ready.url), "dark", "a grill on another port sees it too, no localStorage");
+
+  assert.equal((await setTheme(a.ready.url, "chartreuse")).status, 400, "an unknown theme is rejected");
+  assert.equal((await setTheme(a.ready.url, "light", "https://evil.example")).status, 403, "a foreign origin is rejected");
+  assert.equal(await themeOf(b.ready.url), "dark", "rejected writes changed nothing");
+});
+
 test("wait: blocks for a seq newer than --after (default: current last), prints it, exits 0; exit 3 on timeout", async (t) => {
   const { session } = newSession(tmp("grill-w-"));
   const s = await startServe(session); t.after(s.stop);
