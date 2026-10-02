@@ -22,4 +22,4 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: node --check server.mjs
-      - run: node --test test/server.test.mjs
+      - run: node --test test/*.test.mjs

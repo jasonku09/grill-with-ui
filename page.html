@@ -86,6 +86,8 @@
   #explore { font-size: 13px; padding: 6px 12px; flex-shrink: 0; }
   #explore:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); }
   .card .body { font-size: 15px; color: var(--ink-2); max-width: 62ch; margin: 0; white-space: pre-line; }
+  .card .body code, .opt code, .why code, .msg .text code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; background: #efebe3; padding: 1px 5px; border-radius: 4px; }
+  .card .body a, .opt a, .why a, .msg .text a { color: var(--accent); }
   .opts { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 8px; }
   .opt { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: start; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); cursor: pointer; }
   .opt .check { width: 20px; height: 20px; color: var(--ok); visibility: hidden; align-self: center; }
@@ -240,6 +242,24 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Minimal markdown (issue #9, fork). Keep in sync with markdown.mjs.
+// Escape first, then inline code, bold, italic, and safe links only.
+const isSafeMdUrl = (url) => /^(https?:\/\/[^\s"'<>]+|\/[^\s"'<>]*|#[^\s"'<>]*)$/.test(url);
+const md = (s) => {
+  const codes = [];
+  const noCode = esc(s).replace(/`([^`\n]+?)`/g, (_, code) => {
+    codes.push(`<code>${code}</code>`);
+    return `\0CODE${codes.length - 1}\0`;
+  });
+  const linked = noCode.replace(/\[([^\]]+?)\]\(([^)\s]+?)\)/g, (m, label, url) =>
+    isSafeMdUrl(url) ? `<a href="${url}">${label}</a>` : m
+  );
+  const formatted = linked
+    .replace(/\*\*([^*]+?)\*\*/g, (_, b) => `<strong>${b}</strong>`)
+    .replace(/\*([^*]+?)\*/g, (_, i) => `<em>${i}</em>`)
+    .replace(/(^|\W)_([^_]+?)_(\W|$)/g, (_, pre, i, post) => `${pre}<em>${i}</em>${post}`);
+  return formatted.replace(/\0CODE(\d+)\0/g, (_, n) => codes[Number(n)]);
+};
 const WORKING_GRACE_MS = 5 * 60 * 1000;
 const DRAW_GRACE_MS = 10 * 60 * 1000; // a background draw older than this is treated as stuck: Regenerate comes back
 const DRAW_STUCK_NOTE = "The draw has run over 10 minutes; regenerate to try again.";
@@ -435,7 +455,7 @@ function renderHeader() {
   const terms = Array.isArray(S.terms) ? S.terms : [];
   $("terms-toggle").textContent = `Terms${terms.length ? " · " + terms.length : ""}`;
   $("terms").innerHTML = terms.length
-    ? terms.map((t) => `<div class="term"><b>${esc(t.term)}</b> — ${esc(t.def)}${t.avoid && t.avoid.length ? `<div class="avoid">Avoid: ${t.avoid.map(esc).join(", ")}</div>` : ""}</div>`).join("")
+    ? terms.map((t) => `<div class="term"><b>${esc(t.term)}</b> — ${md(t.def)}${t.avoid && t.avoid.length ? `<div class="avoid">Avoid: ${t.avoid.map(esc).join(", ")}</div>` : ""}</div>`).join("")
     : `<div class="term" style="color:var(--ink-3)">No terms yet. The agent adds vocabulary here as it settles.</div>`;
   renderVisualizeButton();
   renderStatus();
@@ -520,13 +540,13 @@ function renderMain() {
   const pendAnswer = pend.filter((a) => a.type === "answer").pop() || null;
   const opts = (q.options || []).map((o) => {
     const isRec = rec.option === o.k, chosen = q.answer && q.answer.option === o.k, staged = s.answer && s.answer.option === o.k, pending = !staged && pendAnswer && pendAnswer.option === o.k;
-    return `<li class="opt${isRec ? " rec" : ""}${chosen ? " chosen" : ""}${staged ? " staged" : ""}${pending ? " pending" : ""}" data-opt="${esc(o.k)}"><span class="k">${esc(o.k)}</span><span>${isRec ? `<div class="tag">Recommended</div>` : ""}${esc(o.text)}</span>${pending ? `<span class="check pending"><span class="spin"></span></span>` : `<span class="check">${CHECK}</span>`}</li>`;
+    return `<li class="opt${isRec ? " rec" : ""}${chosen ? " chosen" : ""}${staged ? " staged" : ""}${pending ? " pending" : ""}" data-opt="${esc(o.k)}"><span class="k">${esc(o.k)}</span><span>${isRec ? `<div class="tag">Recommended</div>` : ""}${md(o.text)}</span>${pending ? `<span class="check pending"><span class="spin"></span></span>` : `<span class="check">${CHECK}</span>`}</li>`;
   }).join("") + (q.status === "answered" && q.answer && q.answer.kind === "text" && q.answer.text
-    ? `<li class="opt chosen text-answer"><span class="k"></span><span><div class="tag">Your answer</div>${esc(q.answer.text)}</span><span class="check">${CHECK}</span></li>` : "")
+    ? `<li class="opt chosen text-answer"><span class="k"></span><span><div class="tag">Your answer</div>${md(q.answer.text)}</span><span class="check">${CHECK}</span></li>` : "")
     + (pendAnswer && pendAnswer.kind === "text" && pendAnswer.text
-    ? `<li class="opt pending text-answer"><span class="k"></span><span><div class="tag">Your answer · sending</div>${esc(pendAnswer.text)}</span><span class="check pending"><span class="spin"></span></span></li>` : "");
-  const why = rec.option ? `<p class="why"><b>Why ${esc(rec.option)}.</b> ${esc(rec.why)}</p>`
-    : rec.text ? `<p class="why"><b>Suggested.</b> ${esc(rec.text)}${rec.why ? " — " + esc(rec.why) : ""}</p>` : rec.why ? `<p class="why">${esc(rec.why)}</p>` : "";
+    ? `<li class="opt pending text-answer"><span class="k"></span><span><div class="tag">Your answer · sending</div>${md(pendAnswer.text)}</span><span class="check pending"><span class="spin"></span></span></li>` : "");
+  const why = rec.option ? `<p class="why"><b>Why ${esc(rec.option)}.</b> ${md(rec.why)}</p>`
+    : rec.text ? `<p class="why"><b>Suggested.</b> ${md(rec.text)}${rec.why ? " — " + md(rec.why) : ""}</p>` : rec.why ? `<p class="why">${md(rec.why)}</p>` : "";
   let stagedLine = "";
   if (s.defer) stagedLine = "Staged: defer this question";
   else if (s.reopen) stagedLine = "Staged: reopen this question";
@@ -548,7 +568,7 @@ function renderMain() {
   main.innerHTML = `<article class="card${lk ? " locked" : ""}${picked ? " picked" : ""}">
       <div class="crumb">${crumb.join("")}</div>
       <div class="title-row"><h2>${esc(q.title)}</h2>${exploreBtn}</div>
-      <p class="body">${esc(q.body)}</p>
+      <p class="body">${md(q.body)}</p>
       ${opts ? `<ul class="opts">${opts}</ul>` : ""}
       ${why}${stagedLine}${controls}
     </article>`;
@@ -569,13 +589,13 @@ function renderAside() {
   if (!q) { aside.innerHTML = ""; return; }
   const s = local.staged[q.id] || {}; const lk = locked(); const d = local.drafts[q.id] || {};
   const thread = Array.isArray(q.thread) ? q.thread : [];
-  const msgs = thread.map((m) => `<div class="msg ${m.who === "agent" ? "agent" : "user"}"><div class="who">${esc(m.who)}${m.at ? " · " + timeOf(m.at) : ""}</div><div class="text">${esc(m.text)}</div></div>`).join("")
-    + pendingActions(q.id).filter((a) => a.type === "thread").map((a) => `<div class="msg user pending"><div class="who"><span class="spin"></span>you · sending</div><div class="text">${esc(a.text)}</div></div>`).join("")
-    + (s.thread || []).map((t, i) => `<div class="msg user staged"><div class="who">you · staged</div><div class="text">${esc(t)}</div>${lk ? "" : `<a href="#" class="rm" data-rm="${i}" title="Remove">×</a>`}</div>`).join("");
+  const msgs = thread.map((m) => `<div class="msg ${m.who === "agent" ? "agent" : "user"}"><div class="who">${esc(m.who)}${m.at ? " · " + timeOf(m.at) : ""}</div><div class="text">${md(m.text)}</div></div>`).join("")
+    + pendingActions(q.id).filter((a) => a.type === "thread").map((a) => `<div class="msg user pending"><div class="who"><span class="spin"></span>you · sending</div><div class="text">${md(a.text)}</div></div>`).join("")
+    + (s.thread || []).map((t, i) => `<div class="msg user staged"><div class="who">you · staged</div><div class="text">${md(t)}</div>${lk ? "" : `<a href="#" class="rm" data-rm="${i}" title="Remove">×</a>`}</div>`).join("");
   const rec = q.rec || {};
   let explore = "";
   if (q.explore && Array.isArray(q.explore.rows) && q.explore.rows.length) {
-    const li = (xs) => `<ul>${(Array.isArray(xs) ? xs : []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+    const li = (xs) => `<ul>${(Array.isArray(xs) ? xs : []).map((x) => `<li>${md(x)}</li>`).join("")}</ul>`;
     explore = `<div class="explore-head">Pros and cons${q.explore.at ? " · " + timeOf(q.explore.at) : ""}</div>
       <table class="procon"><thead><tr><th></th><th>Pros</th><th>Cons</th></tr></thead><tbody>${q.explore.rows.map((r) =>
         `<tr><td class="k${rec.option === r.option ? " rec" : ""}">${esc(r.option)}</td><td class="pro">${li(r.pros)}</td><td class="con">${li(r.cons)}</td></tr>`).join("")}</tbody></table>`;
@@ -593,9 +613,9 @@ function renderAside() {
 function renderFeedback(aside) {
   const v = visual(); const lk = locked(); const d = local.drafts.__visual || {};
   const thread = Array.isArray(v.thread) ? v.thread : [];
-  const msgs = thread.map((m) => `<div class="msg ${m.who === "agent" ? "agent" : "user"}"><div class="who">${esc(m.who)}${m.at ? " · " + timeOf(m.at) : ""}</div><div class="text">${esc(m.text)}</div></div>`).join("")
-    + pendingOfType("visual-feedback").map((a) => `<div class="msg user pending"><div class="who"><span class="spin"></span>you · sending</div><div class="text">${esc(a.text)}</div></div>`).join("")
-    + local.vfeedback.map((t, i) => `<div class="msg user staged"><div class="who">you · staged</div><div class="text">${esc(t)}</div>${lk ? "" : `<a href="#" class="rm" data-rmf="${i}" title="Remove">×</a>`}</div>`).join("");
+  const msgs = thread.map((m) => `<div class="msg ${m.who === "agent" ? "agent" : "user"}"><div class="who">${esc(m.who)}${m.at ? " · " + timeOf(m.at) : ""}</div><div class="text">${md(m.text)}</div></div>`).join("")
+    + pendingOfType("visual-feedback").map((a) => `<div class="msg user pending"><div class="who"><span class="spin"></span>you · sending</div><div class="text">${md(a.text)}</div></div>`).join("")
+    + local.vfeedback.map((t, i) => `<div class="msg user staged"><div class="who">you · staged</div><div class="text">${md(t)}</div>${lk ? "" : `<a href="#" class="rm" data-rmf="${i}" title="Remove">×</a>`}</div>`).join("");
   aside.innerHTML = `
     <div class="head"><h3>Visual feedback</h3><div class="sub">${v.kind === "diagram" ? "Diagram" : "Prototype"} · v${esc(v.version)}<span class="count">${thread.length} message${thread.length === 1 ? "" : "s"}</span></div></div>
     <div class="msgs">${msgs || `<div class="empty-thread">Nothing yet. Say what is wrong or missing in the visual; the agent redraws it on the next send. If a note contradicts an answered question, that question is reopened for you.</div>`}</div>
