@@ -384,6 +384,37 @@ try {
   await page.locator("#visualize").click();
   check("staging locked when finished", await page.locator("#free").count() === 0 && await page.locator("#thread-in").count() === 0 && await page.locator("#finish").count() === 0);
 
+  // multi question: options toggle into a set, the recommendation is a set, the send carries options
+  s = fixture(); s.agent = { status: "waiting", since: new Date().toISOString(), handled: 6 };
+  s.questions.push({ id: "q5", round: 4, deps: [], title: "Which channels?", body: "Any mix.", multi: true,
+    options: [{ k: "A", text: "Email" }, { k: "B", text: "SMS" }, { k: "C", text: "Push" }],
+    rec: { options: ["A", "C"], why: "Both are free to send." }, status: "open", durable: false, updated: false, thread: [] });
+  s.questions.push({ id: "q6", round: 4, deps: [], title: "Answered multi", body: "Done.", multi: true,
+    options: [{ k: "A", text: "One" }, { k: "B", text: "Two" }, { k: "C", text: "Three" }],
+    rec: { options: ["A"], why: "Fine." }, status: "answered", answer: { kind: "option", options: ["A", "B"] }, durable: false, updated: false, thread: [] });
+  writeState(s);
+  await page.waitForFunction(() => !document.getElementById("banner").classList.contains("done"));
+  await page.locator(".item", { hasText: "Q5" }).click();
+  check("multi: hint shown, both recommended options marked, why names the set", await page.locator(".multi-hint").count() === 1 && await page.locator(".opt.rec").count() === 2 && (await page.locator(".why b").textContent()) === "Why A + C.");
+  await page.locator('.opt[data-opt="A"]').click();
+  await page.locator('.opt[data-opt="B"]').click();
+  check("multi: two clicks stage two options", await page.locator(".opt.staged").count() === 2 && (await page.locator(".staged-line").textContent()).includes("Staged: options A + B") && (await page.locator("#staged-list").textContent()).includes("Q5 → A + B"));
+  await page.locator('.opt[data-opt="B"]').click();
+  await page.locator('.opt[data-opt="C"]').click();
+  check("multi: toggling to the recommended set stages an accept", (await page.locator(".staged-line").textContent()).includes("Staged: accept A + C"));
+  await page.locator('.opt[data-opt="A"]').click(); await page.locator('.opt[data-opt="C"]').click();
+  check("multi: an emptied set unstages the answer", await page.locator(".staged-line").count() === 0 && await page.locator(".item .mark.staged").count() === 0);
+  await page.locator("#accept-rec").click();
+  check("multi: accept link stages the recommended set", (await page.locator(".staged-line").textContent()).includes("Staged: accept A + C"));
+  await page.locator(".item", { hasText: "Q6" }).click();
+  check("multi: recorded answer shows every chosen option, nav mark names the set", await page.locator(".opt.chosen").count() === 2 && (await page.locator(".item", { hasText: "Q6" }).locator(".mark").textContent()).includes("A + B"));
+  await page.locator('.opt[data-opt="C"]').click();
+  check("multi: changing an answer starts from the recorded set", await page.locator(".opt.staged").count() === 3 && await page.locator(".opt.chosen").count() === 0);
+  await page.locator("#send").click();
+  const multiEv = JSON.parse(await srv.nth(2));
+  const a5 = multiEv.actions.find((a) => a.q === "q5"), a6 = multiEv.actions.find((a) => a.q === "q6");
+  check("multi: send carries the option sets", a5 && a5.kind === "accept" && JSON.stringify(a5.options) === '["A","C"]' && a6 && a6.kind === "option" && JSON.stringify(a6.options) === '["A","B","C"]', JSON.stringify(multiEv.actions));
+
   // The server-gone step above produces ERR_CONNECTION_REFUSED fetch failures by design.
   const real = errors.filter((e) => !e.includes("ERR_CONNECTION_REFUSED"));
   check("no console errors (besides the deliberate server-gone fetches)", real.length === 0, real.join(" | "));

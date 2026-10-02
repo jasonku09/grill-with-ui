@@ -102,6 +102,8 @@
   .opt.staged { border-color: var(--stage); box-shadow: 0 0 0 1px var(--stage); background: var(--stage-soft); }
   .opt.pending { border-color: var(--stage); border-style: dashed; } .opt.pending .k { color: var(--stage); } .opt .check.pending { visibility: visible; color: var(--stage); display: flex; align-items: center; justify-content: center; }
   .locked .opt { cursor: default; } .locked .opt:hover { border-color: var(--rule); }
+  .multi-hint { margin: 16px 0 0; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+  .multi-hint + .opts { margin-top: 8px; }
   .why { margin: 14px 0 0; font-size: 14px; color: var(--ink-2); white-space: pre-line; } .why b { color: var(--accent); font-weight: 600; }
   .staged-line { margin-top: 10px; font-size: 14px; color: var(--stage); } .staged-line a { color: var(--ink-3); font-size: 12px; margin-left: 8px; }
   .pending-line { margin-top: 10px; font-size: 14px; color: var(--stage); display: flex; align-items: center; gap: 8px; }
@@ -266,6 +268,13 @@ const hasVisual = () => { const v = visual(); return !!v && (Number(v.version) |
 const drawing = () => { const v = visual(); return v && v.drawing && typeof v.drawing === "object" ? v.drawing : null; };
 const drawStuck = () => { const d = drawing(); return !!d && Date.now() - Date.parse(d.since || 0) > DRAW_GRACE_MS; };
 const activeView = () => (local.view === "visualize" && hasVisual() ? "visualize" : "questions");
+// A multi question takes a set of options: rec.options and answer.options. A single one
+// takes rec.option and answer.option. keysOf reads either shape, so callers need not care.
+const isMulti = (q) => !!(q && q.multi);
+const keysOf = (x) => (x && Array.isArray(x.options) ? x.options : x && x.option ? [x.option] : []);
+const recKeys = (q) => keysOf(q && q.rec);
+const sameKeys = (a, b) => a.length === b.length && a.every((k) => b.includes(k));
+const keyLabel = (x) => keysOf(x).join(" + ");
 const timeOf = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
 const fmtMs = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
 
@@ -300,6 +309,21 @@ function onState() {
 const st = (id) => (local.staged[id] = local.staged[id] || {});
 const prune = (id) => { const s = local.staged[id]; if (s && !s.answer && !s.defer && !s.reopen && !(s.thread && s.thread.length)) delete local.staged[id]; };
 function stageAnswer(id, answer) { const s = st(id); s.answer = answer; delete s.defer; delete s.reopen; commit(); }
+// Clicking an option of a multi question toggles it in the staged set. The set starts from
+// what is staged, else from the recorded answer, so changing an answer edits it instead of
+// starting over. An emptied set unstages the answer.
+function toggleOption(q, k) {
+  const s = local.staged[q.id];
+  const base = s && s.answer && s.answer.kind !== "text" ? keysOf(s.answer) : q.status === "answered" && !(s && s.answer) ? keysOf(q.answer) : [];
+  const next = base.includes(k) ? base.filter((x) => x !== k) : base.concat(k);
+  if (!next.length) return clearStaged(q.id);
+  stageKeys(q, next);
+}
+function stageKeys(q, keys) {
+  const order = (q.options || []).map((o) => o.k);
+  const sorted = keys.slice().sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  stageAnswer(q.id, { kind: sameKeys(sorted, recKeys(q)) ? "accept" : "option", options: sorted });
+}
 function stageThread(id, text) { const s = st(id); (s.thread = s.thread || []).push(text); if (local.drafts[id]) delete local.drafts[id].thread; commit(); }
 function stageDefer(id) { const s = st(id); s.defer = true; delete s.answer; delete s.reopen; commit(); }
 function stageReopen(id) { const s = st(id); s.reopen = true; delete s.answer; delete s.defer; commit(); }
@@ -326,7 +350,7 @@ function buildActions() {
   for (const [q, s] of Object.entries(local.staged)) {
     if (s.reopen) out.push({ q, type: "reopen" });
     if (s.defer) out.push({ q, type: "defer" });
-    if (s.answer) { const a = { q, type: "answer", kind: s.answer.kind }; if (s.answer.option) a.option = s.answer.option; if (s.answer.text) a.text = s.answer.text; out.push(a); }
+    if (s.answer) { const a = { q, type: "answer", kind: s.answer.kind }; if (s.answer.option) a.option = s.answer.option; if (s.answer.options) a.options = s.answer.options; if (s.answer.text) a.text = s.answer.text; out.push(a); }
     for (const t of s.thread || []) out.push({ q, type: "thread", text: t });
   }
   for (const t of local.vfeedback) out.push({ type: "visual-feedback", text: t });
@@ -497,7 +521,7 @@ function renderNav() {
       el.className = "item" + (q.id === selected ? " selected" : "") + (q.updated ? " updated" : "");
       const mark = s ? `<span class="mark staged">staged</span>`
         : pendingActions(q.id).some((a) => a.type !== "explore") ? `<span class="mark pending"><span class="spin"></span>sent</span>`
-        : `<span class="mark ${esc(q.status)}">${q.status === "answered" ? CHECK + esc((q.answer && q.answer.option) || "text") : esc(q.status)}</span>`;
+        : `<span class="mark ${esc(q.status)}">${q.status === "answered" ? CHECK + esc(keyLabel(q.answer) || "text") : esc(q.status)}</span>`;
       el.innerHTML = `<span class="id">${esc(q.id).toUpperCase()}</span><span class="t">${esc(q.title)}</span>${mark}`;
       el.onclick = () => { selected = q.id; render(); };
       nav.appendChild(el);
@@ -519,18 +543,20 @@ function renderMain() {
   const pend = pendingActions(q.id);
   const pendAnswer = pend.filter((a) => a.type === "answer").pop() || null;
   const opts = (q.options || []).map((o) => {
-    const isRec = rec.option === o.k, chosen = q.answer && q.answer.option === o.k, staged = s.answer && s.answer.option === o.k, pending = !staged && pendAnswer && pendAnswer.option === o.k;
+    // A multi question shows one set at a time: the staged set, else the one in flight, else the recorded one.
+    const shadow = isMulti(q) && (s.answer || pendAnswer);
+    const isRec = recKeys(q).includes(o.k), chosen = !shadow && keysOf(q.answer).includes(o.k), staged = keysOf(s.answer).includes(o.k), pending = !staged && !(isMulti(q) && s.answer) && keysOf(pendAnswer).includes(o.k);
     return `<li class="opt${isRec ? " rec" : ""}${chosen ? " chosen" : ""}${staged ? " staged" : ""}${pending ? " pending" : ""}" data-opt="${esc(o.k)}"><span class="k">${esc(o.k)}</span><span>${isRec ? `<div class="tag">Recommended</div>` : ""}${esc(o.text)}</span>${pending ? `<span class="check pending"><span class="spin"></span></span>` : `<span class="check">${CHECK}</span>`}</li>`;
   }).join("") + (q.status === "answered" && q.answer && q.answer.kind === "text" && q.answer.text
     ? `<li class="opt chosen text-answer"><span class="k"></span><span><div class="tag">Your answer</div>${esc(q.answer.text)}</span><span class="check">${CHECK}</span></li>` : "")
     + (pendAnswer && pendAnswer.kind === "text" && pendAnswer.text
     ? `<li class="opt pending text-answer"><span class="k"></span><span><div class="tag">Your answer · sending</div>${esc(pendAnswer.text)}</span><span class="check pending"><span class="spin"></span></span></li>` : "");
-  const why = rec.option ? `<p class="why"><b>Why ${esc(rec.option)}.</b> ${esc(rec.why)}</p>`
+  const why = recKeys(q).length ? `<p class="why"><b>Why ${esc(keyLabel(rec))}.</b> ${esc(rec.why)}</p>`
     : rec.text ? `<p class="why"><b>Suggested.</b> ${esc(rec.text)}${rec.why ? " — " + esc(rec.why) : ""}</p>` : rec.why ? `<p class="why">${esc(rec.why)}</p>` : "";
   let stagedLine = "";
   if (s.defer) stagedLine = "Staged: defer this question";
   else if (s.reopen) stagedLine = "Staged: reopen this question";
-  else if (s.answer) stagedLine = s.answer.kind === "accept" ? `Staged: accept ${esc(s.answer.option)}` : s.answer.option ? `Staged: option ${esc(s.answer.option)}` : `Staged text: “${esc(s.answer.text)}”`;
+  else if (s.answer) stagedLine = s.answer.kind === "accept" ? `Staged: accept ${esc(keyLabel(s.answer))}` : keysOf(s.answer).length > 1 ? `Staged: options ${esc(keyLabel(s.answer))}` : keysOf(s.answer).length ? `Staged: option ${esc(keyLabel(s.answer))}` : `Staged text: “${esc(s.answer.text)}”`;
   if (stagedLine) stagedLine = `<div class="staged-line">${stagedLine}<a href="#" id="clear-staged">clear</a></div>`;
   const pendBits = pend.filter((a) => a.type === "defer" || a.type === "reopen").map((a) => a.type);
   if (pendBits.length) stagedLine += `<div class="pending-line"><span class="spin"></span>Sent: ${pendBits.join(", ")} this question · waiting for the agent</div>`;
@@ -539,7 +565,7 @@ function renderMain() {
         <textarea id="free" placeholder="${q.status === "answered" ? "Change your answer, or add nuance…" : (q.options || []).length ? "Free-text answer, if none of the options fit…" : "Your answer…"}">${esc(d.free || "")}</textarea>
         <button id="stage-text" type="button" title="Stage text (⌘↩)">Stage text</button>
       </div>
-      <div class="links">${isOpen(q) ? `<a href="#" id="defer">Defer this question</a>` : `<a href="#" id="reopen">Reopen this question</a>`}</div>`;
+      <div class="links">${isMulti(q) && recKeys(q).length > 1 ? `<a href="#" id="accept-rec">Accept the recommended ${esc(keyLabel(rec))}</a>` : ""}${isOpen(q) ? `<a href="#" id="defer">Defer this question</a>` : `<a href="#" id="reopen">Reopen this question</a>`}</div>`;
   const exploring = isExploring(q.id);
   const gate = sendState(false);
   const exploreBtn = (q.options || []).length && !lk
@@ -549,12 +575,14 @@ function renderMain() {
       <div class="crumb">${crumb.join("")}</div>
       <div class="title-row"><h2>${esc(q.title)}</h2>${exploreBtn}</div>
       <p class="body">${esc(q.body)}</p>
+      ${opts && isMulti(q) ? `<p class="multi-hint">Pick one or more</p>` : ""}
       ${opts ? `<ul class="opts">${opts}</ul>` : ""}
       ${why}${stagedLine}${controls}
     </article>`;
   main.querySelectorAll("[data-go]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); if (byId(a.dataset.go)) { selected = a.dataset.go; render(); } }));
   if (lk) return;
-  main.querySelectorAll(".opt:not(.text-answer)").forEach((o) => (o.onclick = () => stageAnswer(q.id, { kind: o.dataset.opt === rec.option ? "accept" : "option", option: o.dataset.opt })));
+  main.querySelectorAll(".opt:not(.text-answer)").forEach((o) => (o.onclick = () => isMulti(q) ? toggleOption(q, o.dataset.opt) : stageAnswer(q.id, { kind: o.dataset.opt === rec.option ? "accept" : "option", option: o.dataset.opt })));
+  const ar = $("accept-rec"); if (ar) ar.onclick = (e) => { e.preventDefault(); stageKeys(q, recKeys(q)); };
   const ex = $("explore"); if (ex) ex.onclick = () => explore(q.id);
   $("stage-text").onclick = () => { const t = $("free").value.trim(); if (t) { (local.drafts[q.id] = local.drafts[q.id] || {}).free = ""; stageAnswer(q.id, { kind: "text", text: t }); } };
   $("free").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).free = e.target.value; save(); };
@@ -578,7 +606,7 @@ function renderAside() {
     const li = (xs) => `<ul>${(Array.isArray(xs) ? xs : []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
     explore = `<div class="explore-head">Pros and cons${q.explore.at ? " · " + timeOf(q.explore.at) : ""}</div>
       <table class="procon"><thead><tr><th></th><th>Pros</th><th>Cons</th></tr></thead><tbody>${q.explore.rows.map((r) =>
-        `<tr><td class="k${rec.option === r.option ? " rec" : ""}">${esc(r.option)}</td><td class="pro">${li(r.pros)}</td><td class="con">${li(r.cons)}</td></tr>`).join("")}</tbody></table>`;
+        `<tr><td class="k${recKeys(q).includes(r.option) ? " rec" : ""}">${esc(r.option)}</td><td class="pro">${li(r.pros)}</td><td class="con">${li(r.cons)}</td></tr>`).join("")}</tbody></table>`;
   }
   if (isExploring(q.id)) explore += `<div class="explore-wait"><span class="spin"></span> Exploring: the agent is writing a pros and cons table for this question.</div>`;
   aside.innerHTML = `
@@ -610,7 +638,7 @@ function renderFooter() {
   const parts = Object.entries(local.staged).map(([id, s]) => {
     const bits = [];
     if (s.reopen) bits.push("reopen"); if (s.defer) bits.push("defer");
-    if (s.answer) bits.push(s.answer.option ? "→ " + s.answer.option : "→ text");
+    if (s.answer) bits.push(keysOf(s.answer).length ? "→ " + keyLabel(s.answer) : "→ text");
     if (s.thread && s.thread.length) bits.push(`+${s.thread.length} msg`);
     return `${esc(id).toUpperCase()} ${bits.join(" ")}`;
   });

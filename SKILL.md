@@ -156,8 +156,10 @@ described there, then return to listening.
    counts the working time from the `since` the server stamps).
 2. Work through each item of `actions` in order, collecting its changes for the step 6
    patch (every item but `finish` names a question id `q`):
-   - `answer` → set that question's `answer` (`kind` accept|option|text, plus `option` or
-     `text`) and `status: "answered"`.
+   - `answer` → set that question's `answer` (`kind` accept|option|text, plus `option`,
+     `options`, or `text`, copied as the send gives them) and `status: "answered"`. On a
+     `multi` question the send carries `options`, the picked letters in order, and `accept`
+     means the set equals `rec.options`.
    - `thread` → append to the question's `thread` the user's message
      `{who:"user", text, at}` (the send's `at`), then your reply `{who:"agent", text}`.
      Answer the question asked, with your reasoning; a thread message never answers the
@@ -219,6 +221,12 @@ decisions in order:
 - Every question has a `title`, a `body` that states what hangs on it, lettered `options`
   (two to four), and `rec` with the recommended option and a one-paragraph `why` that names
   the trade-off. A question with no sensible options has `options: []` and `rec.text`.
+- When the options do not exclude each other and the user may want any mix of them (which
+  channels to support, which checks to run, which roles get access), set `multi: true` and
+  recommend a set: `rec.options: ["A","C"]` instead of `rec.option`. The page lets the user
+  toggle any number of options. Keep single choice whenever picking one rules out the
+  others; never use `multi` to dodge a real trade-off, and never offer an "all of the above"
+  option on a `multi` question.
 - If a question can be answered by exploring the codebase or the docs, explore instead of
   asking, and mention what you found in the next question's body.
 - Maintain `terms` as vocabulary settles: `term`, one-sentence `def`, and `avoid` (words
@@ -411,9 +419,10 @@ What each field means. You write it only through `patch`.
   "questions": [{
     "id": "q7", "round": 4, "deps": ["q2"], "title": "…", "body": "…",
     "options": [{ "k": "A", "text": "…" }],
-    "rec": { "option": "A", "why": "…" },                       // or { "text": "…", "why": "…" }
+    "multi": false,                                             // true: any number of options may be picked
+    "rec": { "option": "A", "why": "…" },                       // or { "text": "…", "why": "…" }; multi: { "options": ["A","C"], "why": "…" }
     "status": "open|answered|deferred|reopened", "durable": false, "updated": false,
-    "answer": { "kind": "accept|option|text", "option": "A", "text": "…" },
+    "answer": { "kind": "accept|option|text", "option": "A", "text": "…" },  // multi: { "kind": "accept|option", "options": ["A","C"] }
     "explore": { "at": "ISO", "rows": [{ "option": "A", "pros": ["…"], "cons": ["…"] }] },  // after an explore action
     "thread": [{ "who": "user|agent", "text": "…", "at": "ISO" }]
   }]
@@ -425,6 +434,7 @@ Send lines (`events.jsonl`, also printed by `serve`):
 ```jsonc
 { "type": "send", "seq": 12, "at": "ISO", "session": "/abs/session/folder", "actions": [
   { "q": "q15", "type": "answer", "kind": "accept|option|text", "option": "A", "text": "…" },
+  { "q": "q16", "type": "answer", "kind": "accept|option", "options": ["A", "C"] },  // a multi question
   { "q": "q8",  "type": "thread", "text": "…" },
   { "q": "q17", "type": "defer" }, { "q": "q3", "type": "reopen" }, { "q": "q9", "type": "explore" },
   { "type": "visualize" }, { "type": "visual-feedback", "text": "…" },

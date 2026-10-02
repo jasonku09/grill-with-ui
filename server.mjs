@@ -413,8 +413,10 @@ function validateState(s) {
     need(Number.isFinite(q.round), `${w}.round must be a number`);
     need(str(q.title), `${w}.title must be a string`);
     need(STATUSES.includes(q.status), `${w}.status must be one of ${STATUSES.join("|")}`);
-    need(isObj(q.rec), `${w}.rec must be an object ({"option","why"} or {"text","why"})`);
+    need(isObj(q.rec), `${w}.rec must be an object ({"option","why"}, {"options","why"} or {"text","why"})`);
     texts(q.rec, ["option", "text", "why"], `${w}.rec`);
+    check(q.rec, "options", strs, `${w}.rec.options must be an array of option letters`);
+    check(q, "multi", bool, `${w}.multi must be true or false`);
     check(q, "body", str, `${w}.body must be a string`);
     check(q, "deps", strs, `${w}.deps must be an array of question ids`);
     check(q, "options", (v) => Array.isArray(v) && v.every((x) => isObj(x) && str(x.k) && (!("text" in x) || str(x.text))),
@@ -422,6 +424,7 @@ function validateState(s) {
     if ("answer" in q) {
       need(isObj(q.answer) && ANSWER_KINDS.includes(q.answer.kind), `${w}.answer.kind must be one of ${ANSWER_KINDS.join("|")}`);
       texts(q.answer, ["option", "text"], `${w}.answer`);
+      check(q.answer, "options", strs, `${w}.answer.options must be an array of option letters`);
     }
     if ("explore" in q) {
       const e = q.explore;

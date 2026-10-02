@@ -77,7 +77,8 @@ In any project:
 ```
 
 The agent prints a URL. Open it. Answer by clicking an option (the recommended one is
-outlined) or writing free text; start a discussion in the right-hand panel; use **Defer** and **Reopen** on a card when
+outlined) or writing free text. A card marked "Pick one or more" takes any number of
+options, and each click toggles one. Start a discussion in the right-hand panel; use **Defer** and **Reopen** on a card when
 you want to. Everything you do is staged (and survives a reload) until you press **Send N to
 Agent** (⌘↩). The one exception is **Explore deeper** next to a question's title: it goes to
 the agent the moment you click it, and the pros and cons table for that question's options

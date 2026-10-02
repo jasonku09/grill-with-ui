@@ -569,6 +569,10 @@ test("patch: every field the page renders must have the shape the render reads, 
   rejected(session, { questions: [{ id: "q1", rec: { text: 5, why: "w" } }] }, /q1\.rec\.text/);
   rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "option", option: 2 } }] }, /q1\.answer\.option/);
   rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "text", text: boom } }] }, /q1\.answer\.text/);
+  // A multi question's sets are mapped as lists of letters: a string set or a non-string letter throws.
+  rejected(session, { questions: [{ id: "q1", multi: "yes" }] }, /q1\.multi/);
+  rejected(session, { questions: [{ id: "q1", rec: { options: "A", why: "w" } }] }, /q1\.rec\.options/);
+  rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "option", options: ["A", 2] } }] }, /q1\.answer\.options/);
   rejected(session, { visual: { note: boom } }, /visual\.note/);
   rejected(session, { visual: { version: 2, at: 5 } }, /visual\.at/);
   rejected(session, { visual: { drawing: { since: boom, seq: 2 } } }, /visual\.drawing/);
@@ -583,6 +587,8 @@ test("patch: every field the page renders must have the shape the render reads, 
       { id: "q1", status: "answered", answer: { kind: "text", text: "Neither, a third way" }, rec: { text: "t", why: "w" },
         explore: { rows: [{ option: "A", pros: ["p"], cons: [] }, { option: "B", pros: [], cons: ["c"] }] } },
       { id: "q2", round: 2, title: "No options", body: "b", rec: { why: "only a why" } },
+      { id: "q3", round: 2, title: "Multi", body: "b", multi: true, options: [{ k: "A", text: "a" }, { k: "B", text: "b" }],
+        rec: { options: ["A", "B"], why: "w" }, status: "answered", answer: { kind: "accept", options: ["A", "B"] } },
     ],
     visual: { version: 2, note: "v2: bigger", drawing: { seq: 3 } },
     finished: { doc: "docs/x-design.md", visual: "docs/x-visual.html" },
