@@ -2,15 +2,22 @@
 // grill-with-ui server. Plain Node, no dependencies, no build step.
 //
 //   new      --topic T [--intent I] [--doc P]         create a session folder under GRILL_HOME, print {session,key,project,id,doc,intent}
-//   serve    --session DIR [--port N]               serve the page; append each Send to events.jsonl AND print the same
+//   serve    --session DIR [--port N] [--host ADDR | --lan] [--open | --open-command P]
+//                                                   serve the page; append each Send to events.jsonl AND print the same
 //                                                   line to stdout (this process is the agent's Monitor command).
 //                                                   Without --port it retries the port it used last time, then falls
 //                                                   back to an ephemeral one, so an open tab survives a restart.
+//                                                   Loopback is the default: --lan listens on all interfaces and
+//                                                   prints a LAN URL next to the localhost one; --host ADDR is the
+//                                                   escape hatch. --open attempts to open the live page in a browser
+//                                                   (best effort, never fails setup); --open-command P runs P with
+//                                                   the URL as its argument instead of the OS opener.
 //   sessions [--all]                                list this project's sessions (newest first; --all adds finished ones)
 //   pending  --session DIR                          print every Send past agent.handled (replay on resume)
 //   wait     --session DIR [--after N] [--timeout S] block until a Send newer than seq N lands, print it, exit 0
 //                                                   (exit 3 on timeout) — for agents without a Monitor tool
-//   url      --session DIR [--timeout S]            print the running server's url (from server.json)
+//   url      --session DIR [--timeout S] [--all]    print the running server's url (from server.json);
+//                                                   --all also prints the LAN URL when the server exposes one
 //   patch    --session DIR [--file P]               apply a JSON patch (stdin, or the file P) to state.json: merge,
 //                                                   validate, write atomically, print one short summary line
 //
@@ -22,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import tty from "node:tty";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -135,8 +142,57 @@ function cmdPending(o) {
 }
 
 // ---- serve ----
+// A printed URL is a promise the server keeps: the LAN URL is printed only
+// when the server actually listens beyond loopback (--lan or an --host that
+// binds all interfaces). The default stays loopback-only.
+function lanIPv4() {
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a && a.family === "IPv4" && !a.internal) return a.address;
+    }
+  }
+  return null;
+}
+function defaultOpener(url) {
+  if (process.platform === "darwin") return ["open", url];
+  if (process.platform === "win32") return ["cmd", "/c", "start", "", url];
+  if (process.platform === "linux" || process.platform === "freebsd" || process.platform === "openbsd") return ["xdg-open", url];
+  return null;
+}
+// Best effort by contract: diagnostics go to stderr, stdout keeps the
+// ready-plus-sends protocol untouched, and a failed launch never fails setup.
+function openPage(url, command) {
+  const argv = command ? [command, url] : defaultOpener(url);
+  if (!argv) { process.stderr.write(`grill: no browser opener on this platform; open ${url} by hand\n`); return; }
+  let child;
+  try {
+    child = spawn(argv[0], argv.slice(1), { detached: true, stdio: "ignore" });
+  } catch {
+    process.stderr.write(`grill: could not open ${url} automatically; open it by hand\n`);
+    return;
+  }
+  child.on("error", () => process.stderr.write(`grill: could not open ${url} automatically; open it by hand\n`));
+  child.unref();
+  process.stderr.write(`grill: opening ${url} in the browser\n`);
+}
 function cmdServe(o) {
   const session = mustSession(o);
+  const explicitHost = o.host !== undefined ? (o.host !== true ? String(o.host) : "") : null;
+  if (o.lan && explicitHost !== null) die("use --lan or --host <addr>, not both");
+  const openCommand = o["open-command"] !== undefined && o["open-command"] !== true ? String(o["open-command"]) : null;
+  if (o["open-command"] === true) die("--open-command needs a program path");
+  if (o.open && openCommand) die("use --open or --open-command <program>, not both");
+  let host = "127.0.0.1";
+  let needLanUrl = false;
+  if (o.lan) {
+    if (!lanIPv4()) die("--lan needs a LAN IPv4 interface and none was found");
+    host = "0.0.0.0";
+    needLanUrl = true;
+  } else if (explicitHost !== null) {
+    if (!explicitHost) die("--host needs an address");
+    host = explicitHost;
+  }
+  const anyInterface = host === "0.0.0.0" || host === "::";
   const events = path.join(session, "events.jsonl");
   const stateFile = path.join(session, "state.json");
   const serverFile = path.join(session, "server.json");
@@ -187,17 +243,23 @@ function cmdServe(o) {
   const explicit = o.port !== undefined && o.port !== true;
   let attempt = explicit ? Number(o.port) : rememberedPort(serverFile);
   srv.on("error", (e) => {
-    if (!srv.listening && !explicit && attempt !== 0 && e.code === "EADDRINUSE") { attempt = 0; srv.listen(0, "127.0.0.1"); return; }
+    if (!srv.listening && !explicit && attempt !== 0 && e.code === "EADDRINUSE") { attempt = 0; srv.listen(0, host); return; }
     die(`server error: ${e.message}`, 1);
   });
   srv.on("listening", () => {
     const { port } = srv.address();
-    const url = `http://127.0.0.1:${port}/`;
+    const display = anyInterface ? "127.0.0.1" : host;
+    const url = `http://${display}:${port}/`;
+    const lan = lanIPv4();
+    const lanUrl = lan && (needLanUrl || anyInterface) ? `http://${lan}:${port}/` : null;
     selfOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
-    writeJson(serverFile, { url, port, pid: process.pid, started: new Date().toISOString() });
-    print({ type: "ready", url, session });
+    if (lanUrl) selfOrigins.push(lanUrl.slice(0, -1));
+    if (!anyInterface && display !== "127.0.0.1" && display !== "localhost") selfOrigins.push(`http://${display}:${port}`);
+    writeJson(serverFile, { url, port, pid: process.pid, started: new Date().toISOString(), host, ...(lanUrl ? { lanUrl } : {}) });
+    print({ type: "ready", url, session, ...(lanUrl ? { lanUrl } : {}) });
+    if (o.open || openCommand) openPage(url, openCommand);
   });
-  srv.listen(attempt, "127.0.0.1");
+  srv.listen(attempt, host);
   // server.json stays on exit on purpose: it remembers the port for the next serve, and
   // `url` checks the pid before trusting it.
   const bye = () => process.exit(0);
@@ -235,8 +297,12 @@ function cmdUrl(o) {
   const deadline = Date.now() + Number(o.timeout !== undefined && o.timeout !== true ? o.timeout : 5) * 1000;
   const tick = () => {
     try {
-      const { url, pid } = JSON.parse(fs.readFileSync(serverFile, "utf8"));
-      if (url && (!pid || alive(pid))) { process.stdout.write(url + "\n"); process.exit(0); }
+      const info = JSON.parse(fs.readFileSync(serverFile, "utf8"));
+      if (info.url && (!info.pid || alive(info.pid))) {
+        process.stdout.write(info.url + "\n");
+        if (o.all && info.lanUrl) process.stdout.write(info.lanUrl + "\n");
+        process.exit(0);
+      }
     } catch { /* not there yet */ }
     if (Date.now() >= deadline) die(`no running server for ${session}`, 1);
     setTimeout(tick, 100);
