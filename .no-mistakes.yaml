@@ -1,0 +1,12 @@
+# no-mistakes per-repo config — gates a branch through
+# review → test → document → lint → push → PR → CI in a disposable worktree,
+# then opens a clean PR.  Docs: https://kunchenguid.github.io/no-mistakes/
+#
+# `agent` executes on the daemon host, so no-mistakes reads it ONLY from the
+# default branch (`main`) — it takes effect once committed to main, never from a
+# pushed feature branch.
+
+# Ordered fallback: pipeline steps (review/fix/document/lint) run on Codex and
+# fall back to Claude Code if Codex is unavailable. The Codex model itself is
+# pinned in the daemon's global config, not here.
+agent: [codex, claude]
