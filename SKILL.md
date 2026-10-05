@@ -124,8 +124,9 @@ GRILL_PATCH
    browser (best effort: a missing opener leaves the printed URL and a manual
    instruction, and setup never depends on it).
 4. Run `node $SKILL/server.mjs url --session <session>`; it prints the URL
-   (`--all` also prints the LAN URL when the server exposes one).
-5. Print ONE line: the URL (both URLs with `--lan`), how many questions wait, and the doc path (say the user can change
+   (with `--lan` add `--all` so it prints the LAN URL on the second line).
+5. Print ONE line: the URL (both URLs with `--lan`, the LAN one exactly as printed,
+   token included, since the second machine must open that full address), how many questions wait, and the doc path (say the user can change
    the path by typing in the terminal). Return to listening.
 
 ## Resume (`/grill-with-ui resume`)
