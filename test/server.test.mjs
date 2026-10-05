@@ -728,6 +728,10 @@ test("serve --lan: ready and server.json carry a tokenized LAN URL; the LAN orig
   assert.equal((await sendAs(s.ready.url + "send", "https://evil.example")).status, 403, "a foreign origin is still rejected on loopback");
   assert.equal((await fetch(lanBase)).status, 403, "the LAN page without a token is rejected");
   assert.equal((await fetch(lan("", token))).status, 200, "the LAN page serves with the token");
+  assert.equal((await fetch(lanBase + "events")).status, 403, "LAN /events without a token is rejected");
+  assert.equal((await fetch(lan("events"))).status, 200, "LAN /events serves with the token");
+  assert.equal((await fetch(lanBase + "visual")).status, 403, "LAN /visual without a token is rejected");
+  assert.equal((await fetch(lan("visual"))).status, 404, "LAN /visual with the token passes the gate (404, no visual yet)");
   await s.out.nth(2);
 
   assert.deepEqual(run(["url", "--session", session, "--all"]).split("\n"), [s.ready.url, s.ready.lanUrl], "url --all prints both");
