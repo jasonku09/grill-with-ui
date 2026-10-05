@@ -698,23 +698,36 @@ test("serve: loopback by default — no lanUrl in ready or server.json, url prin
   assert.equal(run(["url", "--session", session]), s.ready.url);
 });
 
-test("serve --lan: ready and server.json carry a LAN URL next to localhost; the LAN origin is accepted", async (t) => {
-  const lan = Object.values(networkInterfaces()).flat().find((a) => a && a.family === "IPv4" && !a.internal);
-  if (!lan) { t.skip("no LAN IPv4 interface on this machine"); return; }
+test("serve --lan: ready and server.json carry a tokenized LAN URL; the LAN origin is accepted", async (t) => {
+  const all = Object.values(networkInterfaces()).flat().filter((a) => a && a.family === "IPv4" && !a.internal).map((a) => a.address);
+  if (!all.length) { t.skip("no LAN IPv4 interface on this machine"); return; }
+  const rfc1918 = (ip) => ip.startsWith("10.") || ip.startsWith("192.168.") || (() => { const m = ip.match(/^172\.(\d+)\./); return !!m && Number(m[1]) >= 16 && Number(m[1]) <= 31; })();
+  const expected = all.find(rfc1918) || all[0]; // RFC 1918 first, so a Tailscale 100.x never wins over Wi-Fi
   const { session } = newSession(tmp("grill-lan-"));
   const s = await startServe(session, ["--lan"]); t.after(s.stop);
   assert.match(s.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/, "the primary URL stays localhost");
-  assert.match(s.ready.lanUrl, new RegExp(`^http://${lan.address.replace(/\./g, "\\.")}:\\d+/$`));
+  assert.match(s.ready.lanUrl, new RegExp(`^http://${expected.replace(/\./g, "\\.")}:\\d+/\\?t=[0-9a-f]{32}$`), "the LAN URL carries a 128-bit token and prefers RFC 1918");
   const info = JSON.parse(readFileSync(join(session, "server.json"), "utf8"));
   assert.equal(info.lanUrl, s.ready.lanUrl);
   assert.equal(info.host, "0.0.0.0");
 
-  assert.equal((await fetch(s.ready.url + "state")).status, 200, "localhost still serves");
-  assert.equal((await fetch(s.ready.lanUrl + "state")).status, 200, "the LAN URL serves too");
+  const token = new URL(s.ready.lanUrl).searchParams.get("t");
+  const lanBase = s.ready.lanUrl.replace(/\/\?t=.*$/, "/");
+  const lan = (p, tok = token) => lanBase + p + (tok ? `?t=${tok}` : "");
+  const lanOrigin = new URL(s.ready.lanUrl).origin;
+
+  assert.equal((await fetch(s.ready.url + "state")).status, 200, "localhost still serves without a token");
+  assert.equal((await fetch(lan("state"))).status, 200, "the LAN URL serves with the token");
+  assert.equal((await fetch(lanBase + "state")).status, 403, "the LAN address without a token is rejected");
+  assert.equal((await fetch(lan("state", "wrong"))).status, 403, "a wrong token is rejected");
   const actions = [{ q: "q1", type: "defer" }];
-  const sendAs = (base, origin) => fetch(base + "send", { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ actions }) });
-  assert.equal((await sendAs(s.ready.lanUrl, s.ready.lanUrl.slice(0, -1))).status, 200, "the LAN origin is accepted");
-  assert.equal((await sendAs(s.ready.url, "https://evil.example")).status, 403, "a foreign origin is still rejected");
+  const sendAs = (url, origin) => fetch(url, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ actions }) });
+  assert.equal((await sendAs(lan("send"), lanOrigin)).status, 200, "the LAN origin is accepted with the token");
+  assert.equal((await sendAs(lanBase + "send", lanOrigin)).status, 403, "a tokenless LAN send is rejected, curl included");
+  assert.equal((await sendAs(lan("send"), "https://evil.example")).status, 403, "a foreign origin is still rejected");
+  assert.equal((await sendAs(s.ready.url + "send", "https://evil.example")).status, 403, "a foreign origin is still rejected on loopback");
+  assert.equal((await fetch(lanBase)).status, 403, "the LAN page without a token is rejected");
+  assert.equal((await fetch(lan("", token))).status, 200, "the LAN page serves with the token");
   await s.out.nth(2);
 
   assert.deepEqual(run(["url", "--session", session, "--all"]).split("\n"), [s.ready.url, s.ready.lanUrl], "url --all prints both");

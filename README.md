@@ -152,8 +152,12 @@ node server.mjs patch    --session DIR [--file P]              apply a JSON patc
 Loopback is the default. Pass `--lan` when you answer from a second machine on the
 same network: the server listens on the LAN interface and `url` prints the LAN address
 next to localhost. Without `--lan` no LAN socket opens and no LAN URL prints, so a grill
-never reaches beyond its own machine by accident. Note that LAN mode exposes the session
-to everyone on that network. Pass `--open` to attempt opening the live page in a browser
+never reaches beyond its own machine by accident. LAN mode mints a random per-serve
+token and puts it in the LAN URL (`http://<ip>:<port>/?t=<token>`); every request from a
+non-loopback address needs it, including `/`, `/state`, `/visual`, `/events`, and `/send`,
+while loopback requests work exactly as before. Treat the LAN URL like a password: anyone
+with it can read the session and send to the agent, so share it only with the answering
+machine. The token is fresh on every serve. Pass `--open` to attempt opening the live page in a browser
 after setup (best effort; without a usable opener the URL and a manual instruction print
 instead). `--open-command P` runs `P` with the URL as its argument instead of the OS opener.
 

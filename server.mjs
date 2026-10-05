@@ -25,6 +25,7 @@
 //                             events.jsonl — appended only by this server, one line per Send
 //                             server.json  — url, port, pid of the running server
 import http from "node:http";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -145,13 +146,37 @@ function cmdPending(o) {
 // A printed URL is a promise the server keeps: the LAN URL is printed only
 // when the server actually listens beyond loopback (--lan or an --host that
 // binds all interfaces). The default stays loopback-only.
-function lanIPv4() {
+function lanIPv4All() {
+  const out = [];
   for (const addrs of Object.values(os.networkInterfaces())) {
     for (const a of addrs || []) {
-      if (a && a.family === "IPv4" && !a.internal) return a.address;
+      if (a && a.family === "IPv4" && !a.internal) out.push(a.address);
     }
   }
-  return null;
+  return out;
+}
+// Prefer the Wi-Fi-style private ranges over VPN/carrier addresses: on a machine
+// with Tailscale the first non-internal IPv4 can be 100.x, not the LAN one.
+function isRFC1918(ip) {
+  if (ip.startsWith("10.")) return true;
+  if (ip.startsWith("192.168.")) return true;
+  const m = ip.match(/^172\.(\d+)\./);
+  if (m) { const n = Number(m[1]); return n >= 16 && n <= 31; }
+  return false;
+}
+function lanIPv4() {
+  const all = lanIPv4All();
+  return all.find(isRFC1918) || all[0] || null;
+}
+// Loopback in the forms Node reports it: 127.0.0.1, ::1, and IPv4-mapped ::ffff:127.0.0.1.
+function isLoopbackAddr(addr) {
+  if (!addr) return true;
+  if (addr === "::1") return true;
+  const v4 = addr.startsWith("::ffff:") ? addr.slice(7) : addr;
+  return v4 === "127.0.0.1";
+}
+function isLoopbackHost(h) {
+  return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "::ffff:127.0.0.1";
 }
 function defaultOpener(url) {
   if (process.platform === "darwin") return ["open", url];
@@ -193,6 +218,16 @@ function cmdServe(o) {
     host = explicitHost;
   }
   const anyInterface = host === "0.0.0.0" || host === "::";
+  // LAN exposure needs a per-serve secret: 128 bits minted fresh on every serve.
+  // It travels in the printed LAN URL (?t=...) and is required on every request
+  // whose socket is not loopback. Loopback keeps today's behavior untouched.
+  const exposed = needLanUrl || anyInterface || !isLoopbackHost(host);
+  const lanToken = exposed ? crypto.randomBytes(16).toString("hex") : null;
+  const tokenOk = (got) => {
+    if (!lanToken || typeof got !== "string" || !got) return false;
+    const a = Buffer.from(got), b = Buffer.from(lanToken);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  };
   const events = path.join(session, "events.jsonl");
   const stateFile = path.join(session, "state.json");
   const serverFile = path.join(session, "server.json");
@@ -206,7 +241,14 @@ function cmdServe(o) {
   const readBody = (req) => new Promise((resolve) => { let b = ""; req.on("data", (c) => { b += c; }); req.on("end", () => resolve(b)); });
 
   const srv = http.createServer(async (req, res) => {
-    const { pathname } = new URL(req.url, "http://x");
+    const u = new URL(req.url, "http://x");
+    const { pathname } = u;
+    // Without the token a LAN neighbor could curl a send into the agent's
+    // monitor (no-Origin requests are allowed on loopback, where only local
+    // processes can reach the port). Gate every non-loopback socket, all paths.
+    if (lanToken && !isLoopbackAddr(req.socket.remoteAddress)) {
+      if (!tokenOk(u.searchParams.get("t"))) return json(res, 403, { error: "missing or invalid LAN token" });
+    }
     if (req.method === "GET" && pathname === "/") return send(res, 200, fs.readFileSync(page), "text/html; charset=utf-8");
     if (req.method === "GET" && pathname === "/state") {
       // `patch` swaps state.json in atomically, but a hand-written file can be caught mid-write:
@@ -249,11 +291,17 @@ function cmdServe(o) {
   srv.on("listening", () => {
     const { port } = srv.address();
     const display = anyInterface ? "127.0.0.1" : host;
-    const url = `http://${display}:${port}/`;
-    const lan = lanIPv4();
-    const lanUrl = lan && (needLanUrl || anyInterface) ? `http://${lan}:${port}/` : null;
+    let url = `http://${display}:${port}/`;
+    let lanUrl = null;
+    if (lanToken && (needLanUrl || anyInterface)) {
+      const lan = lanIPv4();
+      if (lan) lanUrl = `http://${lan}:${port}/?t=${lanToken}`;
+    } else if (lanToken) {
+      // Explicit --host with a non-loopback address: the primary URL is the LAN URL.
+      url = `http://${display}:${port}/?t=${lanToken}`;
+    }
     selfOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
-    if (lanUrl) selfOrigins.push(lanUrl.slice(0, -1));
+    if (lanUrl) selfOrigins.push(new URL(lanUrl).origin);
     if (!anyInterface && display !== "127.0.0.1" && display !== "localhost") selfOrigins.push(`http://${display}:${port}`);
     writeJson(serverFile, { url, port, pid: process.pid, started: new Date().toISOString(), host, ...(lanUrl ? { lanUrl } : {}) });
     print({ type: "ready", url, session, ...(lanUrl ? { lanUrl } : {}) });

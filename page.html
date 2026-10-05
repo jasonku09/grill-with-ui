@@ -245,6 +245,11 @@ const DRAW_GRACE_MS = 10 * 60 * 1000; // a background draw older than this is tr
 const DRAW_STUCK_NOTE = "The draw has run over 10 minutes; regenerate to try again.";
 const GONE_AFTER_MS = 3000;
 const CHECK = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="10" fill="currentColor"/><path d="M6 10.4l2.6 2.6L14 7.4" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// LAN mode mints a per-serve token and puts it in the page URL (?t=...). The
+// page carries it on every fetch so a LAN socket that requires it keeps working;
+// on loopback there is no token and the paths stay exactly as before.
+const LAN_TOKEN = new URLSearchParams(location.search).get("t") || "";
+const withToken = (p) => LAN_TOKEN ? p + (p.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(LAN_TOKEN) : p;
 
 let S = null, raw = null, selected = null, storeKey = null;
 let lastOk = Date.now(), gone = false, confirmFinish = false, intentOpen = false;
@@ -272,7 +277,7 @@ const fmtMs = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return s <
 // ---- polling ----
 async function poll() {
   try {
-    const r = await fetch("/state", { cache: "no-store" });
+    const r = await fetch(withToken("/state"), { cache: "no-store" });
     if (!r.ok) throw new Error(String(r.status));
     const text = await r.text();
     lastOk = Date.now();
@@ -352,7 +357,7 @@ function sendState(needStaged = true) {
 }
 async function post(actions) {
   let r, j = {};
-  try { r = await fetch("/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actions }) }); j = await r.json().catch(() => ({})); } catch { r = null; }
+  try { r = await fetch(withToken("/send"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actions }) }); j = await r.json().catch(() => ({})); } catch { r = null; }
   if (!j.ok) $("send-why").textContent = "Send failed: " + (j.error || (r && r.status) || "no server");
   return j.ok ? j : null;
 }
@@ -460,7 +465,7 @@ function renderVisual() {
     return;
   }
   wait.hidden = true; frame.hidden = false;
-  const src = `/visual?v=${encodeURIComponent(v.version)}`;
+  const src = withToken(`/visual?v=${encodeURIComponent(v.version)}`);
   if (frame.dataset.v !== String(v.version)) { frame.dataset.v = String(v.version); frame.setAttribute("src", src); } // only a version bump reloads the iframe; a background redraw keeps the current one
   const busy = isVisualizing(); const gate = sendState(false); const lk = locked();
   const regenTitle = gate.disabled ? (gate.why || "the agent is busy") : drawStuck() ? DRAW_STUCK_NOTE : "";

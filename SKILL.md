@@ -118,7 +118,9 @@ GRILL_PATCH
    Two opt-in flags change how the page is reached, never whether the grill runs:
    `--lan` listens on the LAN interface and prints a LAN URL next to the localhost one
    (for answering from a second machine on the same network; without it no LAN socket
-   opens and no LAN URL prints), and `--open` attempts to open the live page in a
+   opens and no LAN URL prints; the LAN URL carries a per-serve `?t=` token that every
+   non-loopback request must present, so share that URL only with the answering machine),
+   and `--open` attempts to open the live page in a
    browser (best effort: a missing opener leaves the printed URL and a manual
    instruction, and setup never depends on it).
 4. Run `node $SKILL/server.mjs url --session <session>`; it prints the URL
