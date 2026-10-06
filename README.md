@@ -146,13 +146,26 @@ Playwright and `ffmpeg`.
 
 ```
 node server.mjs new      --topic T [--doc P]                  create a session, print its folder
-node server.mjs serve    --session DIR [--port N]             serve the page; print one line per Send
+node server.mjs serve    --session DIR [--port N] [--host ADDR | --lan] [--open | --open-command P]
+                                                          serve the page; print one line per Send
 node server.mjs sessions [--all]                               list this project's sessions
 node server.mjs pending  --session DIR                         print sends past agent.handled
 node server.mjs wait     --session DIR [--after N] [--timeout S]  block until the next send (exit 3 on timeout)
-node server.mjs url      --session DIR [--timeout S]           print the running server's url
+node server.mjs url      --session DIR [--timeout S] [--all]   print the running server's url (--all adds the LAN URL)
 node server.mjs patch    --session DIR [--file P]              apply a JSON patch (stdin or P) to state.json
 ```
+
+Loopback is the default. Pass `--lan` when you answer from a second machine on the
+same network: the server listens on the LAN interface and `url` prints the LAN address
+next to localhost. Without `--lan` no LAN socket opens and no LAN URL prints, so a grill
+never reaches beyond its own machine by accident. LAN mode mints a random per-serve
+token and puts it in the LAN URL (`http://<ip>:<port>/?t=<token>`); every request from a
+non-loopback address needs it, including `/`, `/state`, `/visual`, `/events`, and `/send`,
+while loopback requests work exactly as before. Treat the LAN URL like a password: anyone
+with it can read the session and send to the agent, so share it only with the answering
+machine. The token is fresh on every serve. Pass `--open` to attempt opening the live page in a browser
+after setup (best effort; without a usable opener the URL and a manual instruction print
+instead). `--open-command P` runs `P` with the URL as its argument instead of the OS opener.
 
 `patch` merges by the rules in `SKILL.md` ("Patching state.json"). A bad patch exits
 non-zero and leaves the file untouched; a good one prints one short summary line, never the

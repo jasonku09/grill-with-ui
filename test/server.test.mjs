@@ -2,9 +2,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -692,4 +692,85 @@ test("cli: an unknown subcommand prints usage and exits 2, including inherited n
     assert.equal(r.stdout, "", `${name} must print nothing on stdout`);
     assert.match(r.stderr, /^grill: usage: server\.mjs [^\n]+\n$/, `${name} must print one usage line`);
   }
+});
+
+test("serve: loopback by default — no lanUrl in ready or server.json, url prints one line", async (t) => {
+  const { session } = newSession(tmp("grill-loop-"));
+  const s = await startServe(session); t.after(s.stop);
+  assert.ok(!("lanUrl" in s.ready), "no LAN URL promised when listening on loopback only");
+  const info = JSON.parse(readFileSync(join(session, "server.json"), "utf8"));
+  assert.ok(!("lanUrl" in info));
+  assert.equal(info.host, "127.0.0.1");
+  assert.equal(run(["url", "--session", session]), s.ready.url);
+});
+
+test("serve --lan: ready and server.json carry a tokenized LAN URL; the LAN origin is accepted", async (t) => {
+  const all = Object.values(networkInterfaces()).flat().filter((a) => a && a.family === "IPv4" && !a.internal).map((a) => a.address);
+  if (!all.length) { t.skip("no LAN IPv4 interface on this machine"); return; }
+  const rfc1918 = (ip) => ip.startsWith("10.") || ip.startsWith("192.168.") || (() => { const m = ip.match(/^172\.(\d+)\./); return !!m && Number(m[1]) >= 16 && Number(m[1]) <= 31; })();
+  const expected = all.find(rfc1918) || all[0]; // RFC 1918 first, so a Tailscale 100.x never wins over Wi-Fi
+  const { session } = newSession(tmp("grill-lan-"));
+  const s = await startServe(session, ["--lan"]); t.after(s.stop);
+  assert.match(s.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/, "the primary URL stays localhost");
+  assert.match(s.ready.lanUrl, new RegExp(`^http://${expected.replace(/\./g, "\\.")}:\\d+/\\?t=[0-9a-f]{32}$`), "the LAN URL carries a 128-bit token and prefers RFC 1918");
+  const info = JSON.parse(readFileSync(join(session, "server.json"), "utf8"));
+  assert.equal(info.lanUrl, s.ready.lanUrl);
+  assert.equal(info.host, "0.0.0.0");
+
+  const token = new URL(s.ready.lanUrl).searchParams.get("t");
+  const lanBase = s.ready.lanUrl.replace(/\/\?t=.*$/, "/");
+  const lan = (p, tok = token) => lanBase + p + (tok ? `?t=${tok}` : "");
+  const lanOrigin = new URL(s.ready.lanUrl).origin;
+
+  assert.equal((await fetch(s.ready.url + "state")).status, 200, "localhost still serves without a token");
+  assert.equal((await fetch(lan("state"))).status, 200, "the LAN URL serves with the token");
+  assert.equal((await fetch(lanBase + "state")).status, 403, "the LAN address without a token is rejected");
+  assert.equal((await fetch(lan("state", "wrong"))).status, 403, "a wrong token is rejected");
+  const actions = [{ q: "q1", type: "defer" }];
+  const sendAs = (url, origin) => fetch(url, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ actions }) });
+  assert.equal((await sendAs(lan("send"), lanOrigin)).status, 200, "the LAN origin is accepted with the token");
+  assert.equal((await sendAs(lanBase + "send", lanOrigin)).status, 403, "a tokenless LAN send is rejected, curl included");
+  assert.equal((await sendAs(lan("send"), "https://evil.example")).status, 403, "a foreign origin is still rejected");
+  assert.equal((await sendAs(s.ready.url + "send", "https://evil.example")).status, 403, "a foreign origin is still rejected on loopback");
+  assert.equal((await fetch(lanBase)).status, 403, "the LAN page without a token is rejected");
+  assert.equal((await fetch(lan("", token))).status, 200, "the LAN page serves with the token");
+  assert.equal((await fetch(lanBase + "events")).status, 403, "LAN /events without a token is rejected");
+  assert.equal((await fetch(lan("events"))).status, 200, "LAN /events serves with the token");
+  assert.equal((await fetch(lanBase + "visual")).status, 403, "LAN /visual without a token is rejected");
+  assert.equal((await fetch(lan("visual"))).status, 404, "LAN /visual with the token passes the gate (404, no visual yet)");
+  await s.out.nth(2);
+
+  assert.deepEqual(run(["url", "--session", session, "--all"]).split("\n"), [s.ready.url, s.ready.lanUrl], "url --all prints both");
+  assert.equal(run(["url", "--session", session]), s.ready.url, "plain url still prints one line");
+});
+
+test("serve: --lan with --host, and --open with --open-command, are rejected with one stderr line", () => {
+  const { session } = newSession(tmp("grill-flag-"));
+  for (const extra of [["--lan", "--host", "127.0.0.1"], ["--lan", "--host"], ["--host"], ["--open", "--open-command", "true"]]) {
+    const r = spawnSync(process.execPath, [SERVER, "serve", "--session", session, ...extra], { encoding: "utf8", env });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.stdout, "", "nothing on stdout when the flags conflict");
+    assert.match(r.stderr, /^grill: [^\n]+\n$/, "exactly one grill: line on stderr");
+  }
+});
+
+test("serve --open-command: the program runs with the live URL and the stdout protocol is untouched", async (t) => {
+  const dir = tmp("grill-open-");
+  const seen = join(dir, "opened.txt");
+  const probe = join(dir, "probe.mjs");
+  writeFileSync(probe, `#!/usr/bin/env node\nimport { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(seen)}, process.argv[2] + "\\n");\n`);
+  chmodSync(probe, 0o755);
+  const { session } = newSession(dir);
+  const s = await startServe(session, ["--open-command", probe]); t.after(s.stop);
+  assert.match(s.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+
+  await post(s.ready.url, { actions: [{ q: "q1", type: "defer" }] });
+  assert.equal(JSON.parse(await s.out.nth(2)).seq, 1, "stdout still carries ready then sends, nothing else");
+  if (process.platform === "win32") return; // shebang probes do not execute there; the protocol asserts above are the portable part
+  let got = "";
+  for (let i = 0; i < 40 && !got; i++) {
+    await sleep(250);
+    try { got = readFileSync(seen, "utf8").trim(); } catch { /* probe has not run yet */ }
+  }
+  assert.equal(got, s.ready.url, "the program received the live URL as its argument");
 });
