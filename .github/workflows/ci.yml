@@ -22,4 +22,5 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: node --check server.mjs
+      - run: node --check markdown.mjs
       - run: node --test test/*.test.mjs

@@ -609,7 +609,7 @@ function renderMain() {
     </article>`;
   main.querySelectorAll("[data-go]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); if (byId(a.dataset.go)) { selected = a.dataset.go; render(); } }));
   if (lk) return;
-  main.querySelectorAll(".opt:not(.text-answer)").forEach((o) => (o.onclick = () => isMulti(q) ? toggleOption(q, o.dataset.opt) : stageAnswer(q.id, { kind: o.dataset.opt === rec.option ? "accept" : "option", option: o.dataset.opt })));
+  main.querySelectorAll(".opt:not(.text-answer)").forEach((o) => (o.onclick = (e) => { if (e.target.closest("a")) return; if (isMulti(q)) toggleOption(q, o.dataset.opt); else stageAnswer(q.id, { kind: o.dataset.opt === rec.option ? "accept" : "option", option: o.dataset.opt }); }));
   const ar = $("accept-rec"); if (ar) ar.onclick = (e) => { e.preventDefault(); stageKeys(q, recKeys(q)); };
   const ex = $("explore"); if (ex) ex.onclick = () => explore(q.id);
   $("stage-text").onclick = () => { const t = $("free").value.trim(); if (t) { (local.drafts[q.id] = local.drafts[q.id] || {}).free = ""; stageAnswer(q.id, { kind: "text", text: t }); } };

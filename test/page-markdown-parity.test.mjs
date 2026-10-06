@@ -37,6 +37,8 @@ const cases = [
   "2 * 3 * 4 equals 24",
   "[docs](https://example.com)",
   "[x](javascript:alert(1))",
+  "[x](ftp://example.com/x)",
+  "[x](data:text/plain,hi)",
   "`[x](https://example.com)`",
   "[guide](https://example.com/_docs_/x)",
   "[**bold** guide](https://example.com)",

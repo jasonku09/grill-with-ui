@@ -40,6 +40,14 @@ test("links render as anchors, unsafe URLs stay literal", () => {
     "[x](javascript:alert(1))"
   );
   assert.equal(
+    md("[x](ftp://example.com/x)"),
+    "[x](ftp://example.com/x)"
+  );
+  assert.equal(
+    md("[x](data:text/plain,hi)"),
+    "[x](data:text/plain,hi)"
+  );
+  assert.equal(
     md("`[x](https://example.com)`"),
     '<code>[x](https://example.com)</code>'
   );

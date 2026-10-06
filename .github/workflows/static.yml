@@ -18,7 +18,7 @@ jobs:
           node-version: 22
       - name: Syntax-check every script
         run: |
-          for f in server.mjs test/*.mjs design/record-demo.mjs; do
+          for f in server.mjs markdown.mjs test/*.mjs design/record-demo.mjs; do
             node --check "$f"
           done
       - name: Page stays dependency-free (no external fetches)
