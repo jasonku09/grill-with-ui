@@ -75,7 +75,8 @@ In any project:
 /grill-with-ui <topic you want grilled>
 ```
 
-The agent prints a URL. Open it. Answer by clicking an option (the recommended one is
+The agent opens the page in your browser and prints its URL too, in case no browser
+could be opened (a headless or remote machine). Answer by clicking an option (the recommended one is
 outlined) or writing free text. A card marked "Pick one or more" takes any number of
 options, and each click toggles one. Start a discussion in the right-hand panel; use **Defer** and **Reopen** on a card when
 you want to. Staged actions and typed drafts survive a reload. **Send N to Agent** (⌘↩)
@@ -125,7 +126,8 @@ To pick up an unfinished grill, in the same project:
 ```
 
 If the agent crashed or was closed, sends you made in the meantime are replayed on resume,
-and the page tab you still have open reconnects on its own.
+and the page tab you still have open reconnects on its own. Resume does not open a second
+tab; if you closed yours, open the URL the agent prints.
 
 ## Files
 
@@ -170,9 +172,14 @@ token and puts it in the LAN URL (`http://<ip>:<port>/?t=<token>`); every reques
 non-loopback address needs it, including `/`, `/state`, `/visual`, `/events`, and `/send`,
 while loopback requests work exactly as before. Treat the LAN URL like a password: anyone
 with it can read the session and send to the agent, so share it only with the answering
-machine. The token is fresh on every serve. Pass `--open` to attempt opening the live page in a browser
-after setup (best effort; without a usable opener the URL and a manual instruction print
-instead). `--open-command P` runs `P` with the URL as its argument instead of the OS opener.
+machine. The token is fresh on every serve.
+
+`--open` opens the live page in a browser once the server is listening. The skill passes it
+when it starts a grill, not on resume (your open tab reconnects) and not with `--lan` (you
+answer from the other machine). It is best effort: without a usable opener a one-line note
+goes to stderr, the server keeps running, and stdout carries the same ready-then-sends
+lines as ever. `--open-command P` runs `P` with the URL as its argument instead of the OS
+opener.
 
 `patch` merges by the rules in `SKILL.md` ("Patching state.json"). A bad patch exits
 non-zero and leaves the file untouched; a good one prints one short summary line, never the

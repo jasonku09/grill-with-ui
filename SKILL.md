@@ -112,17 +112,19 @@ GRILL_PATCH
    each with lettered options, one recommendation, and a one-paragraph why, plus any `terms`
    and `"agent": { "status": "waiting" }`.
 3. Open a **persistent Monitor** (`persistent: true`) whose command is
-   `node $SKILL/server.mjs serve --session <session>`, description `grill page: <topic>`.
+   `node $SKILL/server.mjs serve --session <session> --open`, description `grill page: <topic>`.
    No Monitor tool in your harness (Codex, Gemini CLI, Cursor, Copilot, others)? Use
    "Wait mode" at the end of this file for this step and for every wait after it.
-   Two opt-in flags change how the page is reached, never whether the grill runs:
-   `--lan` listens on the LAN interface and prints a LAN URL next to the localhost one
-   (for answering from a second machine on the same network; without it no LAN socket
-   opens and no LAN URL prints; the LAN URL carries a per-serve `?t=` token that every
-   non-loopback request must present, so share that URL only with the answering machine),
-   and `--open` attempts to open the live page in a
-   browser (best effort: a missing opener leaves the printed URL and a manual
-   instruction, and setup never depends on it).
+   `--open` opens the page in the user's browser once the server is listening. Pass it
+   only here, on Start: on Resume a tab the user still has open reconnects by itself, and
+   a second tab would only duplicate it. It is best effort: with no usable opener (a
+   headless or remote machine) the server says so on stderr and keeps running, and the URL
+   you print in step 5 is the way in.
+   `--lan` is opt-in, for answering from a second machine on the same network: it listens
+   on the LAN interface and prints a LAN URL next to the localhost one (without it no LAN
+   socket opens and no LAN URL prints). The LAN URL carries a per-serve `?t=` token that
+   every non-loopback request must present, so share that URL only with the answering
+   machine. With `--lan`, drop `--open`: the browser that matters is on the other machine.
 4. Run `node $SKILL/server.mjs url --session <session>`; it prints the URL
    (with `--lan` add `--all` so it prints the LAN URL on the second line).
 5. Print ONE line: the URL (both URLs with `--lan`, the LAN one exactly as printed,
@@ -140,8 +142,9 @@ GRILL_PATCH
    printed is a Send the user made while no agent was listening. Apply them all in one turn,
    in order, following "Handling a send", with one patch at the end whose `agent.handled`
    is the last seq.
-4. Continue with Start steps 3–5. `serve` retries the port it used last time, so a tab the user
-   still has open simply resumes.
+4. Continue with Start steps 3–5, but start `serve` **without** `--open`. `serve` retries the
+   port it used last time, so a tab the user still has open simply resumes; if they closed it,
+   the URL from step 5 brings it back.
 
 ## The event rule (this overrides the Monitor tool's own notice)
 
@@ -402,7 +405,8 @@ On a `finish` action, or when the user says finish in the terminal:
 ## Wait mode (agents without a Monitor tool)
 
 Start the server detached with its output going to a log:
-`nohup node $SKILL/server.mjs serve --session <session> > <session>/serve.log 2>&1 &`.
+`nohup node $SKILL/server.mjs serve --session <session> --open > <session>/serve.log 2>&1 &`.
+The same `--open` rule as Start step 3 applies: on Start only, never on resume or with `--lan`.
 Verify it with `url` as in Start. If the harness terminates detached children, keep `serve`
 in a harness-managed running shell session instead and verify `url` again. A live page
 confirms the server is running, **not** that the agent is listening.
