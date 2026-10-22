@@ -249,8 +249,14 @@ function cmdServe(o) {
   // Browsers set Origin on every POST, same-origin or not; reject a mismatch so another tab (or
   // the sandboxed visual iframe, whose Origin is "null") can't forge a request. No Origin at all —
   // curl, wait mode, this project's own tests — is still allowed. http://localhost:<port> is this
-  // same server, so that spelling passes too.
-  const originOk = (req) => { const o = req.headers.origin; return o === undefined || selfOrigins.includes(o); };
+  // same server, so that spelling passes too. In LAN mode a valid token is the authentication, so
+  // it skips the allowlist (the page may be opened as http://<name>.local:<port>/?t=…), except for
+  // the opaque "null" origin: the visual iframe's src carries the token too.
+  const originOk = (req, u) => {
+    const o = req.headers.origin;
+    if (o === undefined || selfOrigins.includes(o)) return true;
+    return o !== "null" && tokenOk(u.searchParams.get("t"));
+  };
 
   const srv = http.createServer(async (req, res) => {
     const u = new URL(req.url, "http://x");
@@ -279,7 +285,7 @@ function cmdServe(o) {
       return send(res, 200, fs.readFileSync(visual), "text/html; charset=utf-8");
     }
     if (req.method === "POST" && pathname === "/send") {
-      if (!originOk(req)) return json(res, 403, { error: "cross-origin request rejected" });
+      if (!originOk(req, u)) return json(res, 403, { error: "cross-origin request rejected" });
       let parsed;
       try { parsed = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "body must be JSON" }); }
       if (!parsed || !Array.isArray(parsed.actions) || parsed.actions.length === 0) return json(res, 400, { error: "actions must be a non-empty array" });
@@ -289,7 +295,7 @@ function cmdServe(o) {
       return json(res, 200, { ok: true, seq });
     }
     if (req.method === "POST" && pathname === "/theme") {
-      if (!originOk(req)) return json(res, 403, { error: "cross-origin request rejected" });
+      if (!originOk(req, u)) return json(res, 403, { error: "cross-origin request rejected" });
       let t;
       try { t = JSON.parse(await readBody(req)).theme; } catch {}
       if (!THEMES.includes(t)) return json(res, 400, { error: "theme must be system, light or dark" });

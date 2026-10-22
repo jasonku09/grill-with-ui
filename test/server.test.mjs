@@ -749,15 +749,27 @@ test("serve --lan: ready and server.json carry a tokenized LAN URL; the LAN orig
   const sendAs = (url, origin) => fetch(url, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ actions }) });
   assert.equal((await sendAs(lan("send"), lanOrigin)).status, 200, "the LAN origin is accepted with the token");
   assert.equal((await sendAs(lanBase + "send", lanOrigin)).status, 403, "a tokenless LAN send is rejected, curl included");
-  assert.equal((await sendAs(lan("send"), "https://evil.example")).status, 403, "a foreign origin is still rejected");
+  // The token is the authentication in LAN mode, so a valid one skips the Origin allowlist: the
+  // page opened as http://<name>.local:<port>/?t=… must be able to send. Token-less requests keep it.
+  const port = new URL(s.ready.url).port;
+  const dotLocal = `http://my-mac.local:${port}`;
+  assert.equal((await sendAs(lan("send"), dotLocal)).status, 200, "a .local origin with the token is accepted");
+  assert.equal((await sendAs(`${s.ready.url}send?t=${token}`, dotLocal)).status, 200, "a valid token skips the allowlist on loopback too");
+  assert.equal((await sendAs(`${s.ready.url}send?t=wrong`, dotLocal)).status, 403, "a wrong token does not skip the allowlist");
+  assert.equal((await sendAs(lan("send"), "null")).status, 403, "the sandboxed visual iframe has the token in its src, so an opaque origin stays rejected");
+  assert.equal((await sendAs(s.ready.url + "send", dotLocal)).status, 403, "a token-less request keeps the Origin allowlist");
   assert.equal((await sendAs(s.ready.url + "send", "https://evil.example")).status, 403, "a foreign origin is still rejected on loopback");
+  const themeAs = (url, origin) => fetch(url, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ theme: "system" }) });
+  assert.equal((await themeAs(lan("theme"), dotLocal)).status, 200, "the theme toggle works from a .local origin with the token");
+  assert.equal((await themeAs(lan("theme"), "null")).status, 403, "and rejects the iframe's opaque origin");
+  assert.equal((await themeAs(lanBase + "theme", lanOrigin)).status, 403, "a tokenless LAN theme write is rejected");
   assert.equal((await fetch(lanBase)).status, 403, "the LAN page without a token is rejected");
   assert.equal((await fetch(lan("", token))).status, 200, "the LAN page serves with the token");
   assert.equal((await fetch(lanBase + "events")).status, 403, "LAN /events without a token is rejected");
   assert.equal((await fetch(lan("events"))).status, 200, "LAN /events serves with the token");
   assert.equal((await fetch(lanBase + "visual")).status, 403, "LAN /visual without a token is rejected");
   assert.equal((await fetch(lan("visual"))).status, 404, "LAN /visual with the token passes the gate (404, no visual yet)");
-  await s.out.nth(2);
+  await s.out.nth(4); // ready + the three accepted sends
 
   assert.deepEqual(run(["url", "--session", session, "--all"]).split("\n"), [s.ready.url, s.ready.lanUrl], "url --all prints both");
   assert.equal(run(["url", "--session", session]), s.ready.url, "plain url still prints one line");
