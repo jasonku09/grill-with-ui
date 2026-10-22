@@ -193,19 +193,28 @@ function defaultOpener(url) {
 }
 // Best effort by contract: diagnostics go to stderr, stdout keeps the
 // ready-plus-sends protocol untouched, and a failed launch never fails setup.
+// Exactly one stderr line, once the outcome is known: a missing opener (ENOENT)
+// and one that exits non-zero (xdg-open on a headless box) both say "open it by
+// hand" — the URL the agent prints is then the way in.
 function openPage(url, command) {
   const argv = command ? [command, url] : defaultOpener(url);
   if (!argv) { process.stderr.write(`grill: no browser opener on this platform; open ${url} by hand\n`); return; }
+  let reported = false;
+  const report = (ok) => {
+    if (reported) return;
+    reported = true;
+    process.stderr.write(ok ? `grill: opened ${url} in the browser\n` : `grill: could not open ${url} automatically; open it by hand\n`);
+  };
   let child;
   try {
     child = spawn(argv[0], argv.slice(1), { detached: true, stdio: "ignore" });
   } catch {
-    process.stderr.write(`grill: could not open ${url} automatically; open it by hand\n`);
+    report(false);
     return;
   }
-  child.on("error", () => process.stderr.write(`grill: could not open ${url} automatically; open it by hand\n`));
+  child.on("error", () => report(false));
+  child.on("exit", (code) => report(code === 0));
   child.unref();
-  process.stderr.write(`grill: opening ${url} in the browser\n`);
 }
 function cmdServe(o) {
   const session = mustSession(o);

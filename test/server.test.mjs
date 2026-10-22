@@ -805,3 +805,50 @@ test("serve --open-command: the program runs with the live URL and the stdout pr
   }
   assert.equal(got, s.ready.url, "the program received the live URL as its argument");
 });
+
+// --open goes through the OS opener found on PATH (open / xdg-open), so these tests put a stub
+// opener (or none) first on PATH: no real browser ever opens. The server itself is run by absolute
+// path, so a PATH without node is fine.
+async function serveWithOpen(session, path, extra = ["--open"]) {
+  const child = spawn(process.execPath, [SERVER, "serve", "--session", session, ...extra], { env: { ...env, PATH: path }, stdio: ["ignore", "pipe", "pipe"] });
+  const out = lineReader(child.stdout);
+  let err = ""; child.stderr.on("data", (d) => { err += d; });
+  const ready = JSON.parse(await out.nth(1));
+  const stop = () => new Promise((res) => { if (child.exitCode !== null) return res(); child.on("exit", res); child.kill(); });
+  return { child, ready, out, stop, stderr: () => err };
+}
+const waitFor = async (cond) => { for (let i = 0; i < 40 && !cond(); i++) await sleep(100); return cond(); };
+const opener = process.platform === "darwin" ? "open" : "xdg-open";
+
+test("serve --open: the OS opener receives the live URL; stdout keeps the ready-then-sends protocol", async (t) => {
+  if (process.platform === "win32") { t.skip("the Windows opener is cmd /c start, not a PATH stub"); return; }
+  const dir = tmp("grill-open-os-");
+  const seen = join(dir, "opened.txt");
+  writeFileSync(join(dir, opener), `#!/bin/sh\necho "$1" >> ${JSON.stringify(seen)}\n`);
+  chmodSync(join(dir, opener), 0o755);
+  const { session } = newSession(dir);
+  const s = await serveWithOpen(session, dir); t.after(s.stop);
+  assert.ok(await waitFor(() => { try { return readFileSync(seen, "utf8").trim() === s.ready.url; } catch { return false; } }), "the stub opener got the URL");
+  await post(s.ready.url, { actions: [{ q: "q1", type: "defer" }] });
+  assert.equal(JSON.parse(await s.out.nth(2)).seq, 1, "stdout still carries ready then sends, nothing else");
+  assert.ok(await waitFor(() => s.stderr() !== ""), "the outcome is reported on stderr");
+  assert.equal(s.stderr(), `grill: opened ${s.ready.url} in the browser\n`, "one line, once the opener succeeded");
+});
+
+test("serve --open: no opener (headless) or a failing one leaves one stderr note and the server running", async (t) => {
+  if (process.platform === "win32") { t.skip("the Windows opener is cmd /c start, not a PATH stub"); return; }
+  const empty = tmp("grill-open-none-");
+  const failing = tmp("grill-open-fail-");
+  writeFileSync(join(failing, opener), "#!/bin/sh\necho 'xdg-open: no method available for opening' >&2\nexit 3\n");
+  chmodSync(join(failing, opener), 0o755);
+  for (const [why, path] of [["no opener on PATH", empty], ["an opener that exits non-zero", failing]]) {
+    const { session } = newSession(tmp("grill-open-h-"));
+    const s = await serveWithOpen(session, path); t.after(s.stop);
+    assert.ok(await waitFor(() => /could not open/.test(s.stderr())), `${why}: a note on stderr`);
+    assert.match(s.stderr(), new RegExp(`^grill: could not open ${s.ready.url.replace(/[.?/]/g, "\\$&")} automatically; open it by hand\n$`), `${why}: exactly one grill: line, naming the URL`);
+    assert.equal(s.child.exitCode, null, `${why}: the server keeps running`);
+    assert.equal((await fetch(s.ready.url + "state")).status, 200, `${why}: and keeps serving`);
+    await post(s.ready.url, { actions: [{ q: "q1", type: "defer" }] });
+    assert.equal(JSON.parse(await s.out.nth(2)).seq, 1, `${why}: stdout untouched`);
+  }
+});
