@@ -3,7 +3,7 @@
 // or, with @playwright/test installed next to this repo, just `node test/page.e2e.mjs`.
 import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -566,6 +566,59 @@ try {
   await browser.close();
   await srv.stop();
 }
+// LAN mode, through a real browser on a non-loopback socket, under a .local name: the page must carry
+// the per-serve token on every request it makes (page, /state, /theme, /send, the visual iframe), and a
+// valid token must let a Send through even though the .local Origin is on no allowlist. Chromium maps
+// the made-up name to this machine's LAN address, so no mDNS is needed.
+const lanIp = Object.values(networkInterfaces()).flat().find((a) => a && a.family === "IPv4" && !a.internal);
+if (!lanIp) console.log("page e2e: LAN checks skipped (no LAN IPv4 interface)");
+else {
+  const { session: lanSession } = JSON.parse(execFileSync(process.execPath, [SERVER, "new", "--topic", "LAN topic"], { encoding: "utf8", env, cwd: mkdtempSync(join(tmpdir(), "grill-e2e-lan-")) }));
+  const lanState = { ...fixture(), topic: "LAN topic", visual: { kind: "diagram", version: 1, at: now, note: "v1", thread: [], stale: false } };
+  writeFileSync(join(lanSession, "state.json"), JSON.stringify(lanState, null, 2));
+  writeFileSync(join(lanSession, "visual.html"), "<!doctype html><h1 id='lan-visual'>LAN visual</h1>");
+  const lanSrv = spawn(process.execPath, [SERVER, "serve", "--session", lanSession, "--lan"], { env, stdio: ["ignore", "pipe", "inherit"] });
+  let lbuf = ""; const llines = []; const lwait = [];
+  lanSrv.stdout.on("data", (d) => { lbuf += d; let i; while ((i = lbuf.indexOf("\n")) >= 0) { llines.push(lbuf.slice(0, i)); lbuf = lbuf.slice(i + 1); lwait.splice(0).forEach((w) => w()); } });
+  const lnth = (n) => new Promise((res) => { const c = () => (llines.length >= n ? res(llines[n - 1]) : lwait.push(c)); c(); });
+  const lanBrowser = await chromium.launch({ args: [`--host-resolver-rules=MAP grill-e2e.local ${lanIp.address}`] });
+  try {
+    const lanReady = JSON.parse(await lnth(1));
+    const lan = new URL(lanReady.lanUrl);
+    const token = lan.searchParams.get("t");
+    const dotLocal = `http://grill-e2e.local:${lan.port}/?t=${token}`;
+    const lp = await lanBrowser.newPage({ viewport: { width: 1440, height: 900 } });
+    const seen = []; const refused = [];
+    lp.on("request", (r) => { if (r.url().startsWith(`http://grill-e2e.local:${lan.port}/`)) seen.push(r.url()); });
+    lp.on("response", (r) => { if (r.status() === 403) refused.push(`${r.request().method()} ${r.url()}`); });
+    await lp.goto(dotLocal);
+    await lp.locator(".item").first().waitFor();
+    const themed = lp.waitForResponse((r) => r.url().includes("/theme"));
+    await lp.locator("#theme-toggle").click();
+    check("lan: the theme toggle's POST /theme passes from a .local origin", (await themed).status() === 200);
+    await lp.locator("#visualize").click();
+    await lp.locator("#visual-frame").waitFor({ state: "visible" });
+    check("lan: the visual iframe loads through the token gate", (await lp.frameLocator("#visual-frame").locator("#lan-visual").textContent()) === "LAN visual");
+    await lp.locator("#visualize").click();
+    await lp.locator(".item", { hasText: "Q3" }).click();
+    await lp.locator(".opt.rec").click();
+    await lp.locator("#thread-in").fill("Typed over the LAN");
+    await lp.locator("#send").click();
+    const line = await Promise.race([lnth(2), sleep(10000).then(() => null)]); // a refused Send never prints
+    const lanSend = line ? JSON.parse(line) : { actions: [] };
+    check("lan: Send from a .local origin with the token lands, typed note included", lanSend.type === "send" && lanSend.actions.some((a) => a.type === "thread" && a.text === "Typed over the LAN") && lanSend.actions.some((a) => a.q === "q3"), JSON.stringify(lanSend.actions));
+    await lp.waitForTimeout(1500); // at least one more /state poll after the send
+    const paths = new Set(seen.map((u) => new URL(u).pathname));
+    check("lan: the page requested /, /state, /theme, /send and /visual", ["/", "/state", "/theme", "/send", "/visual"].every((x) => paths.has(x)), [...paths].join(" "));
+    const bare = seen.filter((u) => new URL(u).searchParams.get("t") !== token);
+    check("lan: every request the page made carries the token", bare.length === 0, bare.join(" | "));
+    check("lan: no request was refused", refused.length === 0, refused.join(" | "));
+  } finally {
+    await lanBrowser.close();
+    await new Promise((res) => { if (lanSrv.exitCode !== null) return res(); lanSrv.on("exit", res); lanSrv.kill(); });
+  }
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`page e2e: ${results.length - failed.length}/${results.length} checks passed${failed.length ? " — FAILED: " + failed.map((f) => f.name).join("; ") : ""}`);
 process.exit(failed.length ? 1 : 0);
