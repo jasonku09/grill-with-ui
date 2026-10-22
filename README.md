@@ -114,6 +114,22 @@ The checkbox hides when the grill is finished. Finish reconciles and copies the 
 visual next to the design doc as
 `docs/<topic>-visual.html`.
 
+When the agent replies in a question's discussion, the question gets a blue dot in the list
+until its unseen replies have been on screen in its open discussion while the tab is visible;
+answered, accepted and deferred questions get one too. **Next unread · N** in the header
+counts those questions and opens the next one after the current question in list order,
+wrapping around, with its first unseen reply in view. It also returns from Visualize to the
+questions, and hides when none remain. Replies unseen when you open a discussion, plus those
+arriving while it stays open, are tagged *new* until you leave it. Your own messages and the
+visual's feedback thread never get these markers. Jumping past an unseen reply leaves the
+question marked until that reply has been on screen too.
+
+Seen is remembered per browser, in localStorage beside the staged work. On the first visit,
+or when upgrading a grill whose saved record has no seen counts, existing replies start as
+seen; questions added later start with no replies seen. Because localStorage is per origin,
+a server that comes back on another port starts over the same way. Two tabs of the same grill
+share the record, with the last save winning.
+
 **Finish grill** sends at once (after an inline confirm), including the same pending items
 as Send; the agent writes the design doc to the path shown in the header (default
 `docs/<topic>-design.md` in your project) and stops.
@@ -170,7 +186,7 @@ state.
 ## Tests
 
 ```sh
-node --test test/server.test.mjs
+node --test test/server.test.mjs test/new-replies.test.mjs
 PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/page.e2e.mjs
 PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/subagent-toggle.e2e.mjs
 ```

@@ -565,6 +565,125 @@ try {
   check("typed: finish carries typed discussion text before the finish action", typedFin.actions.length === 2 && typedFin.actions[0].q === "q3" && typedFin.actions[0].type === "thread" && typedFin.actions[0].text === "Typed before finishing" && typedFin.actions[1].type === "finish", JSON.stringify(typedFin.actions));
   if (evidence) writeFileSync(join(evidence, "typed-note-events.json"), JSON.stringify({ send: typedEv, finish: typedFin }, null, 2));
 
+  // New replies: a dot on every question whose discussion has an agent reply this browser has
+  // not had on screen, answered questions included; a count of those questions in the header;
+  // Next unread. Seen is kept per browser in localStorage, so a fresh context is a first visit.
+  const nrCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const nr = await nrCtx.newPage();
+  nr.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  nr.on("pageerror", (e) => errors.push(String(e)));
+  const nrCapture = async (name) => { if (evidence) await nr.screenshot({ path: join(evidence, name), fullPage: true }); };
+  const says = (who, text) => ({ who, text, at: new Date().toISOString() });
+  const unreadIds = async () => JSON.stringify(await nr.locator(".item.unread .id").allTextContents());
+  const nextLabel = async () => ((await nr.locator("#next-unread").isHidden()) ? "hidden" : nr.locator("#next-unread").textContent());
+  const seenRecord = () => nr.evaluate(() => { const k = Object.keys(localStorage).find((x) => x.startsWith("grill:")); return k ? JSON.parse(localStorage.getItem(k)).seen : null; });
+  const replyInView = (text) => nr.evaluate((text) => {
+    const box = document.querySelector("aside .msgs"), el = box && [...box.querySelectorAll(".msg")].find((m) => m.textContent.includes(text));
+    if (!el) return false;
+    const r = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+    return r.top >= b.top - 1 && r.bottom <= b.bottom + 1;
+  }, text);
+  const waitUnread = (n) => nr.waitForFunction((n) => document.querySelectorAll(".item.unread").length === n, n, { timeout: 5000 });
+  const waitAside = (text) => nr.waitForFunction((text) => document.querySelector("aside").textContent.includes(text), text, { timeout: 5000 });
+  // Rounds: Q1 | Q2, Q5 | Q3, Q4. Q1 already has an agent reply; Q3 (open) is selected on load.
+  s = fixture(); s.agent = { status: "waiting", since: new Date().toISOString(), handled: typedFin.seq };
+  s.questions.push({ id: "q5", round: 2, deps: ["q1"], title: "Accepted earlier", body: "Settled.", options: [{ k: "A", text: "Yes" }, { k: "B", text: "No" }], rec: { option: "A", why: "Fine." }, status: "answered", answer: { kind: "accept", option: "A" }, durable: false, updated: false, thread: [] });
+  const nq = (id) => s.questions.find((q) => q.id === id);
+  writeState(s);
+  await nr.goto(url);
+  await nr.locator(".item").first().waitFor();
+  check("new replies: a first visit takes the replies already there as seen (no dots, no count)", (await unreadIds()) === "[]" && await nr.locator("header #next-unread").isHidden() && ((await seenRecord()) || {}).q1 === 1, JSON.stringify(await seenRecord()));
+
+  nq("q5").thread.push(says("agent", "Accepted, but note the rollout order."));
+  nq("q1").thread.push(says("user", "One more thought on B."));
+  nq("q2").thread.push(says("user", "Parking this until launch."));
+  writeState(s);
+  await waitUnread(1);
+  check("new replies: a reply on an accepted question gets a dot; user messages in the same update never do", (await unreadIds()) === '["Q5"]' && await nr.locator(".item", { hasText: "Q5" }).locator(".mark.answered").count() === 1, await unreadIds());
+  const marks = await nr.evaluate(() => {
+    const row = (id) => [...document.querySelectorAll(".item")].find((el) => el.querySelector(".id").textContent === id);
+    const dot = getComputedStyle(row("Q5"), "::before"), upd = getComputedStyle(row("Q3").querySelector(".t"), "::after");
+    return { dot: [dot.width, dot.height, dot.backgroundColor], updated: [upd.content, upd.color], q3: row("Q3").className };
+  });
+  check("new replies: the dot is its own blue mark, apart from the amber updated word", JSON.stringify(marks.dot) === '["8px","8px","rgb(47, 95, 158)"]' && marks.updated[0] === '"updated"' && marks.updated[1] === "rgb(184, 121, 31)" && marks.q3.includes("updated") && !marks.q3.includes("unread"), JSON.stringify(marks));
+  check("new replies: the header counts it", (await nextLabel()) === "Next unread · 1", await nextLabel());
+  cr = await readable(["#next-unread", "color"], ["#next-unread", "backgroundColor"], 4.5);
+  check("theme: Next unread is readable in both themes", cr.ok, cr.extra);
+
+  nq("q1").thread.push(says("agent", "Agreed, B holds."));
+  nq("q2").thread.push(says("agent", "Parked: it waits for the launch."), says("agent", "It reopens when pricing settles."));
+  writeState(s);
+  await waitUnread(3);
+  check("new replies: answered, deferred and accepted questions all carry their dot", (await unreadIds()) === '["Q1","Q2","Q5"]', await unreadIds());
+  check("new replies: the header counts questions, not replies (3 questions, 4 replies)", (await nextLabel()) === "Next unread · 3", await nextLabel());
+  await nrCapture("new-replies-light.png");
+  await nr.emulateMedia({ colorScheme: "dark" });
+  await nrCapture("new-replies-dark.png");
+  await nr.emulateMedia({ colorScheme: "light" });
+
+  // Seen means on screen, in the open discussion, with the tab visible.
+  nq("q3").thread.push(says("user", "Why Beta?"), says("agent", "Beta balances both."));
+  writeState(s);
+  await waitAside("Beta balances both.");
+  check("new replies: a reply that lands on screen in the open discussion is seen at once, and tagged new there", await nr.locator(".item.selected.unread").count() === 0 && (await nextLabel()) === "Next unread · 3" && (await nr.locator("aside .msg.new").textContent()).includes("Beta balances both."));
+  const setHidden = (hidden) => nr.evaluate((hidden) => {
+    if (hidden) Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    else delete document.visibilityState;
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, hidden);
+  await setHidden(true);
+  nq("q3").thread.push(says("agent", "Arrived while you were in another tab."));
+  writeState(s);
+  await nr.waitForFunction(() => !!document.querySelector(".item.selected.unread"), null, { timeout: 5000 });
+  check("new replies: a reply that lands while the tab is hidden is not seen", (await nextLabel()) === "Next unread · 4", await nextLabel());
+  await setHidden(false);
+  await nr.waitForFunction(() => !document.querySelector(".item.selected.unread"), null, { timeout: 5000 });
+  check("new replies: coming back to the tab sees it", (await nextLabel()) === "Next unread · 3", await nextLabel());
+  nq("q3").thread.push(says("user", Array.from({ length: 40 }, (_, i) => `Line ${i + 1} of a long question.`).join("\n")), says("agent", "A reply below the fold."));
+  writeState(s);
+  await waitAside("A reply below the fold.");
+  check("new replies: a reply below the fold of the open discussion keeps its dot", !(await replyInView("A reply below the fold.")) && await nr.locator(".item.selected.unread").count() === 1 && (await nextLabel()) === "Next unread · 4", await nextLabel());
+  await nr.locator("aside .msgs").evaluate((el) => (el.scrollTop = el.scrollHeight));
+  await nr.waitForFunction(() => !document.querySelector(".item.selected.unread"), null, { timeout: 5000 });
+  check("new replies: scrolling it into view clears the dot", await replyInView("A reply below the fold.") && (await nextLabel()) === "Next unread · 3", await nextLabel());
+
+  // Next unread goes in list order from the open question and wraps; it opens the discussion with
+  // the first new reply in view, which clears that question's mark.
+  await nr.locator("#next-unread").click();
+  check("next unread: wraps around from Q3 to Q1 and opens its discussion with the reply in view", (await nr.locator(".item.selected .id").textContent()) === "Q1" && (await nr.locator("aside .head .sub").textContent()).startsWith("Q1") && await replyInView("Agreed, B holds."));
+  check("next unread: only the reply that was new is tagged, and Q1's mark clears", await nr.locator("aside .msg.new").count() === 1 && (await nr.locator("aside .msg.new").textContent()).includes("Agreed, B holds.") && (await unreadIds()) === '["Q2","Q5"]' && (await nextLabel()) === "Next unread · 2", await unreadIds());
+  await nrCapture("new-replies-after-next.png");
+  await nr.locator("#next-unread").click();
+  check("next unread: moves on to Q2 and sees both of its replies", (await nr.locator(".item.selected .id").textContent()) === "Q2" && await nr.locator("aside .msg.new").count() === 2 && (await unreadIds()) === '["Q5"]' && (await nextLabel()) === "Next unread · 1", await unreadIds());
+  await nr.reload();
+  await nr.locator(".item").first().waitFor();
+  check("new replies: seen and unseen both survive a reload", (await unreadIds()) === '["Q5"]' && (await nextLabel()) === "Next unread · 1", await unreadIds());
+  await nr.locator("#next-unread").click();
+  check("next unread: the last one clears the count and hides the button", (await nr.locator(".item.selected .id").textContent()) === "Q5" && await replyInView("Accepted, but note the rollout order.") && (await unreadIds()) === "[]" && (await nextLabel()) === "hidden", await nextLabel());
+  await nr.reload();
+  await nr.locator(".item").first().waitFor();
+  check("new replies: all seen stays all seen after a reload", (await unreadIds()) === "[]" && (await nextLabel()) === "hidden");
+
+  // A thread that shrinks was rewritten: its count catches up, so the next reply still shows.
+  nq("q1").thread = [];
+  writeState(s);
+  await nr.waitForFunction(() => { const k = Object.keys(localStorage).find((x) => x.startsWith("grill:")); return JSON.parse(localStorage.getItem(k)).seen.q1 === 0; }, null, { timeout: 5000 });
+  nq("q1").thread.push(says("agent", "Starting this thread over."));
+  // A question added after the first visit counts every agent message in it as new.
+  s.questions.push({ id: "q6", round: 4, deps: [], title: "A later question", body: "New.", options: [], rec: { text: "Something", why: "Short." }, status: "open", durable: false, updated: false, thread: [says("agent", "Context before you answer.")] });
+  writeState(s);
+  await waitUnread(2);
+  check("new replies: a rewritten thread's next reply and a later question's agent message both get dots", (await unreadIds()) === '["Q1","Q6"]' && (await nextLabel()) === "Next unread · 2", await unreadIds());
+  // The header button stays while the visual is shown, and takes you back to the questions.
+  s.visual = { kind: "prototype", version: 2, at: new Date().toISOString(), note: "v2", thread: [], stale: false };
+  writeState(s);
+  await nr.waitForFunction(() => document.getElementById("visualize").textContent.includes("Visual · v2"), null, { timeout: 5000 });
+  await nr.locator("#visualize").click();
+  check("next unread: still in the header while the visual is shown", await nr.locator("body.visualize").count() === 1 && (await nextLabel()) === "Next unread · 2");
+  await nr.locator("#next-unread").click();
+  check("next unread: from the visual, it goes back to the questions with the next discussion open", await nr.locator("body.visualize").count() === 0 && (await nr.locator(".item.selected .id").textContent()) === "Q6" && await replyInView("Context before you answer.") && (await nextLabel()) === "Next unread · 1", await nextLabel());
+  await nrCtx.close();
+
   // The server-gone step above produces ERR_CONNECTION_REFUSED fetch failures by design.
   const real = errors.filter((e) => !e.includes("ERR_CONNECTION_REFUSED"));
   check("no console errors (besides the deliberate server-gone fetches)", real.length === 0, real.join(" | "));

@@ -11,6 +11,7 @@
     --ink-2: light-dark(#625b51, #b3aa9c); --ink-3: light-dark(#9a9285, #7d7568); --rule: light-dark(#e6e0d4, #322c24); --hover: light-dark(#efebe3, #2a241d);
     --accent: light-dark(#9a3a26, #e0785c); --ok: light-dark(#3d6b4a, #7fb08d); --ok-soft: light-dark(#e3eee5, #1f2b22); --ok-deep: light-dark(#2f5a3b, #6ea07c); --ok-pulse: light-dark(#7fb08d, #a9d6b6);
     --stage: light-dark(#b8791f, #d9a441); --stage-soft: light-dark(#f8ecd2, #2e2616); --warn-soft: light-dark(#fbe9e4, #38211b);
+    --unread: light-dark(#2f5f9e, #86aee6); /* a new reply; blue so it reads apart from rust (open, recommended), amber (updated, staged) and green (answered) */
     /* Text and ticks on an --accent or --ok fill. Those fills turn light in the dark theme, where white on them drops to 3:1 and below. */
     --on-fill: light-dark(#ffffff, #16130f);
     --serif: "Iowan Old Style", Charter, Georgia, serif;
@@ -81,6 +82,16 @@
   .mark.answered { color: var(--ok); } .mark.open, .mark.reopened { color: var(--accent); } .mark.staged { color: var(--stage); font-weight: 600; } .mark.pending { color: var(--stage); }
   .item.updated .t::after { content: "updated"; font-size: 10px; color: var(--stage); margin-left: 6px; letter-spacing: .06em; text-transform: uppercase; }
   nav .empty { padding: 20px; font-size: 13px; color: var(--ink-3); }
+  /* New replies: an agent message in a question's discussion that this browser has not had on
+     screen. The dot sits in the row's left gutter, so it shows on answered rows too and never
+     competes with the status mark on the right or the amber "updated" word after the title. */
+  .item.unread { position: relative; }
+  .item.unread::before { content: ""; position: absolute; left: 7px; top: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--unread); }
+  #next-unread { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; color: var(--unread); border-color: var(--unread); }
+  #next-unread:hover { background: var(--hover); }
+  #next-unread::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  #next-unread[hidden] { display: none; }
+  .msg.new .who::after { content: "new"; margin-left: 8px; padding: 1px 6px; border-radius: 999px; background: var(--unread); color: var(--on-fill); font-weight: 600; }
 
   /* Visualize view: the list and card columns give way to the visual; the right panel becomes its feedback. */
   #visual { grid-row: 3; grid-column: 1 / 3; display: none; grid-template-rows: auto 1fr; min-height: 0; background: var(--panel); }
@@ -247,6 +258,7 @@
   <button id="visualize" type="button" hidden>Visualize</button>
   <span id="subagent-opt" hidden><input type="checkbox" id="use-subagent" checked><label for="use-subagent">Use subagent</label><span id="subagent-info" class="info" tabindex="0" role="img" aria-label="Using subagents frees up your main context for grilling. You can switch this off once you are done grilling to make the visualization build faster." data-tip="Using subagents frees up your main context for grilling. You can switch this off once you are done grilling to make the visualization build faster.">i</span></span>
   <span class="status"><span class="dot" id="agent-dot"></span><span id="agent-status">connecting…</span></span>
+  <button id="next-unread" type="button" hidden></button>
   <button id="theme-toggle" type="button" data-mode="system">
     <svg class="i-system" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.7a6.3 6.3 0 0 1 0 12.6z" fill="currentColor"/></svg>
     <svg class="i-light" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3 3l1.3 1.3M11.7 11.7L13 13M13 3l-1.3 1.3M4.3 11.7L3 13"/></g></svg>
@@ -348,6 +360,7 @@ async function poll() {
 function onState() {
   const key = "grill:" + (S.project || "") + ":" + (S.created || "");
   if (key !== storeKey) { storeKey = key; load(); }
+  syncSeen();
   const handled = Number((S.agent || {}).handled) || 0;
   const still = local.pending.filter((p) => p.seq > handled);
   if (still.length !== local.pending.length) {
@@ -482,8 +495,101 @@ async function explore(id) {
   if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); commit(); }
 }
 
+// ---- new replies: agent messages in a question's discussion this browser has not seen ----
+// local.seen[id] counts the agent messages at the head of question id's thread that have been
+// seen: on screen in its open discussion while the tab was visible. Patches append to threads;
+// syncSeen also handles observed shrinkage after deletion. See docs/design.md for the count
+// rationale and README.md#use for persistence and first-visit behavior.
+let seenFor = null, openedAt = null, reveal = false;
+let threadCounts = new Map();
+const glimpsed = new Map(); // replies past a seen count that were on screen; the count moves only through an unbroken run of them
+const agentMsgs = (q) => (Array.isArray(q.thread) ? q.thread : []).filter((m) => m && m.who === "agent");
+const seenOf = (q) => Math.min(Number((local.seen || {})[q.id]) || 0, agentMsgs(q).length);
+const unseenOf = (q) => agentMsgs(q).length - seenOf(q);
+const listOrder = () => rounds().flatMap(([, list]) => list); // the order the question list shows
+const unreadQs = () => listOrder().filter((q) => unseenOf(q) > 0);
+const glimpseKey = (k, m) => `${k}#${m.at || ""}`;
+function syncSeen() { // on every state
+  if (seenFor !== storeKey) { seenFor = storeKey; openedAt = null; glimpsed.clear(); threadCounts.clear(); }
+  let changed = !local.seen || typeof local.seen !== "object";
+  if (changed) local.seen = Object.fromEntries(qs().map((q) => [q.id, agentMsgs(q).length]));
+  const counts = new Map(qs().map((q) => [q.id, agentMsgs(q).length]));
+  for (const [id, n] of threadCounts) {
+    if (!counts.has(id) || counts.get(id) < n) {
+      glimpsed.delete(id);
+      if (openedAt && openedAt.q === id) openedAt = null;
+    }
+  }
+  threadCounts = counts;
+  // A thread that shrank was rewritten: catch its count up, so the next reply on it still shows.
+  for (const q of qs()) if (local.seen[q.id] > agentMsgs(q).length) { local.seen[q.id] = agentMsgs(q).length; changed = true; }
+  if (changed) save();
+}
+// The elements of q's agent messages, in order: renderAside writes the thread's messages first
+// in .msgs, one .msg each, ahead of any sending or staged ones.
+function agentEls(q) {
+  const els = $("aside").querySelectorAll(".msgs > .msg");
+  return (Array.isArray(q.thread) ? q.thread : []).flatMap((m, i) => (m && m.who === "agent" && els[i] ? [els[i]] : []));
+}
+// Tag the replies that were new when this discussion was opened. The tag stays while it is open,
+// after they count as seen, so you can still tell which replies just arrived.
+function tagNew(q) {
+  if (!openedAt || openedAt.q !== q.id) openedAt = { q: q.id, n: seenOf(q) };
+  agentEls(q).forEach((el, k) => el.classList.toggle("new", k >= openedAt.n));
+}
+// Count the open discussion's replies that are on screen as seen, if the tab is visible. On screen:
+// at least half of the reply inside the visible part of the panel, or half of that part for a
+// reply taller than it. Returns whether the count moved.
+function noteSeen() {
+  const q = activeView() === "questions" && document.visibilityState === "visible" ? byId(selected) : null;
+  const box = q && local.seen && $("aside").querySelector(".msgs");
+  if (!box) return false;
+  const b = box.getBoundingClientRect();
+  const top = Math.max(b.top, 0), bottom = Math.min(b.bottom, innerHeight, document.querySelector("footer").getBoundingClientRect().top); // on a phone the footer sticks over the page
+  if (bottom <= top) return false;
+  const msgs = agentMsgs(q), was = seenOf(q);
+  if (!glimpsed.has(q.id)) glimpsed.set(q.id, new Set());
+  const sightings = glimpsed.get(q.id);
+  agentEls(q).forEach((el, k) => {
+    const r = el.getBoundingClientRect(), shown = Math.min(r.bottom, bottom) - Math.max(r.top, top);
+    if (k >= was && shown > 0 && shown >= Math.min(r.height, bottom - top) / 2) sightings.add(glimpseKey(k, msgs[k]));
+  });
+  let n = was;
+  while (n < msgs.length && sightings.delete(glimpseKey(n, msgs[n]))) n++;
+  if (n === was) return false;
+  local.seen[q.id] = n; save();
+  return true;
+}
+// The header count and Next unread, and the open question's dot, which noteSeen clears between renders.
+function renderUnread() {
+  const n = unreadQs().length, b = $("next-unread");
+  b.hidden = !n;
+  b.textContent = `Next unread · ${n}`;
+  b.title = n ? `${n === 1 ? "1 question has a reply" : n + " questions have replies"} you have not seen. Opens the next one.` : "";
+  const q = byId(selected), row = $("nav").querySelector(".item.selected");
+  if (q && row) row.classList.toggle("unread", unseenOf(q) > 0);
+}
+// Next unread: the next question in list order after the open one, wrapping around, with a reply
+// you have not seen. Opens its discussion; afterRender brings the first such reply into view.
+function nextUnread() {
+  const order = listOrder(), i = order.findIndex((q) => q.id === selected);
+  const next = order.slice(i + 1).concat(order.slice(0, i + 1)).find((q) => unseenOf(q) > 0);
+  if (!next) return;
+  selected = next.id; local.view = "questions"; reveal = true; commit();
+}
+function afterRender() {
+  const q = reveal && byId(selected), el = q && agentEls(q)[seenOf(q)];
+  reveal = false;
+  if (el) { // centred with its context, or from its first line when it is too tall for that
+    const view = Math.min($("aside").querySelector(".msgs").clientHeight, innerHeight), x = scrollX;
+    el.scrollIntoView({ block: el.offsetHeight < view * 0.6 ? "center" : "start" });
+    if (scrollX !== x) scrollTo(x, scrollY); // on a page wider than a phone, it would also scroll sideways
+  }
+  noteSeen(); renderUnread();
+}
+
 // ---- rendering ----
-function render() { withThreadScroll(() => withInputs(() => { document.body.classList.toggle("visualize", activeView() === "visualize"); renderBanner(); renderHeader(); renderNav(); renderMain(); renderVisual(); renderAside(); renderFooter(); })); }
+function render() { withThreadScroll(() => withInputs(() => { document.body.classList.toggle("visualize", activeView() === "visualize"); renderBanner(); renderHeader(); renderNav(); renderMain(); renderVisual(); renderAside(); renderFooter(); })); afterRender(); }
 function tick() { renderStatus(); renderSend(); }
 function withInputs(fn) {
   const act = document.activeElement; const keep = act && act.tagName === "TEXTAREA" ? { id: act.id, s: act.selectionStart, e: act.selectionEnd } : null;
@@ -599,6 +705,7 @@ function renderNav() {
         : `<span class="mark ${esc(q.status)}">${q.status === "answered" ? CHECK + esc(keyLabel(q.answer) || "text") : esc(q.status)}</span>`;
       el.innerHTML = `<span class="id">${esc(q.id).toUpperCase()}</span><span class="t">${esc(q.title)}</span>${mark}`;
       el.onclick = () => { selected = q.id; render(); };
+      if (unseenOf(q) > 0) el.classList.add("unread");
       nav.appendChild(el);
     }
   }
@@ -667,9 +774,9 @@ function renderMain() {
 }
 function renderAside() {
   const aside = $("aside");
-  if (activeView() === "visualize") return renderFeedback(aside);
+  if (activeView() === "visualize") { openedAt = null; return renderFeedback(aside); }
   const q = byId(selected);
-  if (!q) { aside.innerHTML = ""; return; }
+  if (!q) { openedAt = null; aside.innerHTML = ""; return; }
   const s = local.staged[q.id] || {}; const lk = locked(); const d = local.drafts[q.id] || {};
   const thread = Array.isArray(q.thread) ? q.thread : [];
   const msgs = thread.map((m) => `<div class="msg ${m.who === "agent" ? "agent" : "user"}"><div class="who">${esc(m.who)}${m.at ? " · " + timeOf(m.at) : ""}</div><div class="text">${md(m.text)}</div></div>`).join("")
@@ -689,6 +796,7 @@ function renderAside() {
     <div class="msgs">${explore}${msgs || (explore ? "" : `<div class="empty-thread">Nothing yet. Ask anything about this question; the agent answers here on the next send.</div>`)}</div>
     ${lk ? "" : `<div class="compose"><textarea id="thread-in" placeholder="Dig deeper on ${esc(q.id).toUpperCase()}…">${esc(d.thread || "")}</textarea><button id="stage-thread" type="button" title="Stage message (⌘↩)">Add to discussion</button></div>`}`;
   aside.querySelectorAll("[data-rm]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); removeThread(q.id, Number(a.dataset.rm)); }));
+  tagNew(q);
   if (lk) return;
   $("stage-thread").onclick = () => { const t = $("thread-in").value.trim(); if (t) stageThread(q.id, t); };
   $("thread-in").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).thread = e.target.value; save(); renderFooter(); };
@@ -745,6 +853,7 @@ function renderSend() {
 }
 
 $("send").onclick = send;
+$("next-unread").onclick = nextUnread;
 $("intent").onclick = () => { if ($("intent").classList.contains("show")) { intentOpen = !intentOpen; render(); } };
 $("use-subagent").onchange = (e) => { local.subagent = e.target.checked; commit(); };
 $("visualize").onclick = () => { if (hasVisual()) { local.view = activeView() === "visualize" ? "questions" : "visualize"; commit(); } else visualize(); };
@@ -779,6 +888,13 @@ document.addEventListener("keydown", (e) => {
   }
   send();
 });
+// A reply comes into view by scrolling the discussion (on a phone, the page), by resizing, or by
+// coming back to the tab; check once per frame. Scroll does not bubble, so listen while capturing.
+let seenFrame = 0;
+const queueSeen = () => { if (!seenFrame) seenFrame = requestAnimationFrame(() => { seenFrame = 0; if (noteSeen()) renderUnread(); }); };
+document.addEventListener("scroll", queueSeen, true);
+addEventListener("resize", queueSeen);
+document.addEventListener("visibilitychange", queueSeen);
 poll();
 </script>
 </body>

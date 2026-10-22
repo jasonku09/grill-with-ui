@@ -126,6 +126,13 @@ keeps one Claude session behind it so nothing is ever out of context.
   send (an answer, a thread reply, a new question, the handled bump) is a 3.0 KB patch
   against a 64.7 KB whole file. Incoming Sends were already diffs; this makes the outgoing
   side one too. Locked decision 2 still holds: the agent is the only writer.
+- **New-reply markers are per browser** (2026-10-19, after a 19-question grill where replies
+  on accepted questions got lost among the side-discussions). Use a count rather than the
+  last `at`: one patch stamps everything it appends with the same time, timestamps may be
+  absent, and agents can supply explicit times. Tracking stays in the browser, with no writes
+  to `state.json` or `events.jsonl`, preserving locked decision 2. See [Use](../README.md#use)
+  for marker behavior and persistence, and the new-replies section of
+  [`page.html`](../page.html) for the contiguous-count and visibility invariants.
 
 ## Verified facts (2026-09-06)
 
