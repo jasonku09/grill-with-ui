@@ -1,9 +1,10 @@
 # Visual brief
 
 You are drawing the **visual** for a grill-with-ui design interview: one HTML file showing
-the design as it stands. The interviewer (the agent that launched you) has told you the
-session folder, the kind (prototype or diagram), the project root, and what changed. This
-file holds the rules; follow every one.
+the design as it stands. Use the session folder, kind (prototype or diagram), project root,
+and change list from the interview context or the interviewer's brief. Drawing mode is
+defined in [Subagent or inline](SKILL.md#subagent-or-inline). This file holds the artifact
+rules; follow every one.
 
 ## What you read
 
@@ -15,7 +16,7 @@ file holds the rules; follow every one.
   everything the change list does not mention stable, so the user can see what moved.
 - The project root when the visual should match real UI or code (a prototype of a page that
   exists, a diagram of modules that exist): look first, then draw what is there plus the
-  design. The interviewer's brief says whether the topic is a change to an existing app and
+  design. The interview context or brief says whether the topic is a change to an existing app and
   where it lands (a route, page, or component).
 
 ## Source of truth
@@ -63,6 +64,8 @@ a CDN inside the file, with a one-line note in the file that it needs network.
 
 ## Reply
 
-Do not paste the file back. Reply with ONE line: what the visual now shows, or for a redraw
-what changed, naming question ids ("v3: discussion panel on the right per Q3, sidebar
-collapsible per feedback"). The interviewer copies it into the version note.
+Do not paste the file back. For a subagent draw, reply with ONE line: what the visual now
+shows, or for a redraw what changed, naming question ids ("v3: discussion panel on the right
+per Q3, sidebar collapsible per feedback"). The interviewer copies it into the version note.
+For an inline draw, use that line as the version note and complete the send under
+[Subagent or inline](SKILL.md#subagent-or-inline).

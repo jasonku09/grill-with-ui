@@ -117,6 +117,25 @@ test("serve: /send rejects a mismatched Origin, allows same-origin and no-Origin
   assert.equal(readFileSync(join(session, "events.jsonl"), "utf8").trim().split("\n").length, 3, "only the three accepted sends landed");
 });
 
+test("theme: POST /theme persists globally, is injected into every grill's page, and is origin-guarded", async (t) => {
+  const a = await startServe(newSession(tmp("grill-t1-")).session); t.after(a.stop);
+  const b = await startServe(newSession(tmp("grill-t2-")).session); t.after(b.stop);
+  assert.notEqual(new URL(a.ready.url).port, new URL(b.ready.url).port, "two grills on two ports");
+
+  const themeOf = async (url) => (await (await fetch(url)).text()).match(/<html[^>]*data-theme="([^"]+)"/)[1];
+  assert.equal(await themeOf(a.ready.url), "system", "defaults to system");
+  const setTheme = (url, theme, origin) =>
+    fetch(url + "theme", { method: "POST", headers: { "content-type": "application/json", ...(origin ? { origin } : {}) }, body: JSON.stringify({ theme }) });
+
+  assert.equal((await setTheme(a.ready.url, "dark")).status, 200);
+  assert.equal(await themeOf(a.ready.url), "dark", "the grill that set it sees it");
+  assert.equal(await themeOf(b.ready.url), "dark", "a grill on another port sees it too, no localStorage");
+
+  assert.equal((await setTheme(a.ready.url, "chartreuse")).status, 400, "an unknown theme is rejected");
+  assert.equal((await setTheme(a.ready.url, "light", "https://evil.example")).status, 403, "a foreign origin is rejected");
+  assert.equal(await themeOf(b.ready.url), "dark", "rejected writes changed nothing");
+});
+
 test("wait: blocks for a seq newer than --after (default: current last), prints it, exits 0; exit 3 on timeout", async (t) => {
   const { session } = newSession(tmp("grill-w-"));
   const s = await startServe(session); t.after(s.stop);
@@ -569,6 +588,10 @@ test("patch: every field the page renders must have the shape the render reads, 
   rejected(session, { questions: [{ id: "q1", rec: { text: 5, why: "w" } }] }, /q1\.rec\.text/);
   rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "option", option: 2 } }] }, /q1\.answer\.option/);
   rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "text", text: boom } }] }, /q1\.answer\.text/);
+  // A multi question's sets are mapped as lists of letters: a string set or a non-string letter throws.
+  rejected(session, { questions: [{ id: "q1", multi: "yes" }] }, /q1\.multi/);
+  rejected(session, { questions: [{ id: "q1", rec: { options: "A", why: "w" } }] }, /q1\.rec\.options/);
+  rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "option", options: ["A", 2] } }] }, /q1\.answer\.options/);
   rejected(session, { visual: { note: boom } }, /visual\.note/);
   rejected(session, { visual: { version: 2, at: 5 } }, /visual\.at/);
   rejected(session, { visual: { drawing: { since: boom, seq: 2 } } }, /visual\.drawing/);
@@ -583,6 +606,8 @@ test("patch: every field the page renders must have the shape the render reads, 
       { id: "q1", status: "answered", answer: { kind: "text", text: "Neither, a third way" }, rec: { text: "t", why: "w" },
         explore: { rows: [{ option: "A", pros: ["p"], cons: [] }, { option: "B", pros: [], cons: ["c"] }] } },
       { id: "q2", round: 2, title: "No options", body: "b", rec: { why: "only a why" } },
+      { id: "q3", round: 2, title: "Multi", body: "b", multi: true, options: [{ k: "A", text: "a" }, { k: "B", text: "b" }],
+        rec: { options: ["A", "B"], why: "w" }, status: "answered", answer: { kind: "accept", options: ["A", "B"] } },
     ],
     visual: { version: 2, note: "v2: bigger", drawing: { seq: 3 } },
     finished: { doc: "docs/x-design.md", visual: "docs/x-visual.html" },

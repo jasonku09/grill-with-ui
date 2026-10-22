@@ -2,7 +2,7 @@
 //   PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/page.e2e.mjs
 // or, with @playwright/test installed next to this repo, just `node test/page.e2e.mjs`.
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +52,22 @@ page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
 page.on("pageerror", (e) => errors.push(String(e)));
 const results = [];
 const check = (name, ok, extra = "") => { results.push({ name, ok, extra }); if (!ok) console.log("FAIL", name, extra); };
+const evidence = process.env.GRILL_EVIDENCE_DIR;
+if (evidence) mkdirSync(evidence, { recursive: true });
+const capture = async (name) => { if (evidence) await page.screenshot({ path: join(evidence, name), fullPage: true }); };
+// WCAG contrast of two colours as the page resolves them under a theme (light-dark() included).
+// fg and bg are [selector, computed-style property]. One synchronous evaluate: nothing repaints.
+const contrast = (theme, fg, bg) => page.evaluate(([theme, fg, bg]) => {
+  const root = document.documentElement, was = root.dataset.theme; root.dataset.theme = theme;
+  const lum = ([sel, prop]) => {
+    const x = document.createElement("canvas").getContext("2d"); x.fillStyle = getComputedStyle(document.querySelector(sel))[prop]; x.fillRect(0, 0, 1, 1);
+    const [r, g, b] = [...x.getImageData(0, 0, 1, 1).data].slice(0, 3).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const a = lum(fg), b = lum(bg); root.dataset.theme = was;
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}, [theme, fg, bg]);
+const readable = async (fg, bg, min) => { const r = [await contrast("light", fg, bg), await contrast("dark", fg, bg)]; return { ok: r.every((x) => x >= min), extra: `light ${r[0].toFixed(2)}:1, dark ${r[1].toFixed(2)}:1, need ${min}:1` }; };
 
 try {
   await page.goto(url);
@@ -92,6 +108,29 @@ try {
   check("terms panel shows the term and its avoid list", (await page.locator("#terms").textContent()).includes("Avoid: submit, reply"));
   await page.locator("h1").click();
 
+  // theme: the toggle cycles system → light → dark. System follows the OS, the other two
+  // override it, and the server keeps the choice so a reload (or the next grill) starts with it.
+  const mode = () => page.locator("#theme-toggle").getAttribute("data-mode");
+  const isDark = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor.match(/\d+/g).slice(0, 3).reduce((n, v) => n + Number(v), 0) < 384);
+  const cycle = async () => { const r = page.waitForResponse((x) => x.url().endsWith("/theme") && x.request().method() === "POST"); await page.locator("#theme-toggle").click(); return (await r).status(); };
+  await page.emulateMedia({ colorScheme: "dark" });
+  check("theme: system follows a dark OS", (await mode()) === "system" && await isDark());
+  await page.emulateMedia({ colorScheme: "light" });
+  check("theme: system follows a light OS", !(await isDark()));
+  await page.emulateMedia({ colorScheme: "dark" });
+  check("theme: first click forces light over a dark OS", (await cycle()) === 200 && (await mode()) === "light" && !(await isDark()));
+  await page.emulateMedia({ colorScheme: "light" });
+  check("theme: second click forces dark over a light OS", (await cycle()) === 200 && (await mode()) === "dark" && await isDark());
+  await page.reload();
+  await page.locator(".item").first().waitFor();
+  check("theme: the choice survives a reload, set before the script runs", (await mode()) === "dark" && await isDark() && (await (await fetch(url)).text()).includes('<html lang="en" data-theme="dark">'));
+  await capture("theme-dark.png");
+  check("theme: third click returns to system", (await cycle()) === 200 && (await mode()) === "system" && !(await isDark()));
+  await page.locator(".item", { hasText: "Q1" }).click();
+  let cr = await readable([".opt.chosen .check path", "stroke"], [".opt.chosen .check circle", "fill"], 3);
+  check("theme: the tick on a chosen option stands out from its circle in both themes", cr.ok, cr.extra);
+  await page.locator(".item", { hasText: "Q3" }).click();
+
   await page.locator(".opt.rec").click();
   check("staging an option dims the rest of the card, the picked box stays full", await page.locator(".card.picked").count() === 1
     && (await page.locator(".opt.staged").evaluate((el) => getComputedStyle(el).opacity)) === "1"
@@ -100,6 +139,8 @@ try {
   await page.locator("#thread-in").fill("Would Alpha be simpler?");
   await page.locator("#stage-thread").click();
   check("staged count 2", (await page.locator("#send").textContent()) === "Send 2 to Agent");
+  cr = await readable(["#send", "color"], ["#send", "backgroundColor"], 4.5);
+  check("theme: Send to Agent is readable in both themes", await page.locator("#send").isEnabled() && cr.ok, cr.extra);
   // ⌘↩ in a compose box stages the draft; a second ⌘↩ sends it (issue #12)
   await page.locator(".item", { hasText: "Q4" }).click();
   await page.locator("#free").fill("Short and sweet");
@@ -121,7 +162,7 @@ try {
   check("footer shows the explore send as sent", (await page.locator("#staged-list").textContent()).includes("Sent #1"));
   check("nav shows staged", (await page.locator(".item.selected .mark").textContent()) === "staged");
   await page.locator("#free").fill("draft text that should survive reload");
-  await page.screenshot({ path: "/tmp/grill-v1.png" });
+  await capture("grill-staged.png");
 
   await page.reload();
   await page.locator(".item").first().waitFor();
@@ -157,6 +198,11 @@ try {
   check("send label counts 3", (await page.locator("#send").textContent()) === "Send 3 to Agent");
 
   check("header has a Visualize button before any visual exists", await page.locator("header #visualize").count() === 1 && (await page.locator("#visualize").textContent()) === "Visualize" && await page.locator("body.visualize").count() === 0);
+  check("header has a Use subagent checkbox beside Visualize, checked by default", await page.locator("header #use-subagent").isVisible() && await page.locator("#use-subagent").isChecked() && (await page.locator("label[for=use-subagent]").textContent()).trim() === "Use subagent");
+  check("the info bubble explains the trade-off", (await page.locator("#subagent-info").getAttribute("data-tip")) === "Using subagents frees up your main context for grilling. You can switch this off once you are done grilling to make the visualization build faster." && (await page.locator("#subagent-info").getAttribute("aria-label")) === "Using subagents frees up your main context for grilling. You can switch this off once you are done grilling to make the visualization build faster.");
+  await page.locator("#subagent-info").focus();
+  await capture("subagent-default-tooltip.png");
+  await page.locator("#subagent-info").blur();
 
   // Discussion scroll, first on a panel that cannot scroll at all: nothing there is "at the
   // bottom", so long content arriving is read from its first line. The pros and cons table is
@@ -270,7 +316,7 @@ try {
   // visualize: immediate event; the agent acknowledges at once and draws in the background, so grilling continues
   await page.locator("#visualize").click();
   const visEv = JSON.parse(await srv.nth(4));
-  check("visualize sends immediately as its own event", visEv.seq === 3 && JSON.stringify(visEv.actions) === JSON.stringify([{ type: "visualize" }]), JSON.stringify(visEv.actions));
+  check("visualize sends immediately as its own event", visEv.seq === 3 && JSON.stringify(visEv.actions) === JSON.stringify([{ type: "visualize", subagent: true }]), JSON.stringify(visEv.actions));
   await page.waitForFunction(() => document.getElementById("visualize").textContent.includes("Visualizing…"));
   check("visualize in flight: disabled with a spinner, still on the questions view", await page.locator("#visualize").isDisabled() && await page.locator("#visualize .spin").count() === 1 && await page.locator("body.visualize").count() === 0);
   // the agent acknowledges the send at once: handled = 3, a version-0 visual carrying `drawing`, no file yet
@@ -314,13 +360,17 @@ try {
   await page.locator("#feedback-in").fill("Make the list narrower");
   await page.locator("#stage-feedback").click();
   check("feedback staged: shown in the panel and in the footer", await page.locator("aside .msg.staged").count() === 1 && (await page.locator("#staged-list").textContent()).includes("visual +1 msg"));
+  check("Use subagent stays in the header while a visual is shown", await page.locator("#use-subagent").isVisible());
+  await page.locator("#use-subagent").uncheck();
   await page.reload();
   await page.waitForFunction(() => document.body.classList.contains("visualize"), null, { timeout: 5000 });
   check("visualize view and staged feedback survive reload", await page.locator("aside .msg.staged").count() === 1 && (await page.locator("#staged-list").textContent()).includes("visual +1 msg"));
+  check("Use subagent stays unchecked across a reload", !(await page.locator("#use-subagent").isChecked()));
+  await capture("subagent-unchecked-after-reload.png");
   await page.locator("#send").click();
   await page.waitForFunction(() => document.getElementById("staged-list").textContent.includes("Sent #5"));
   const fbEv = JSON.parse(await srv.nth(6));
-  check("send carries the visual feedback action", fbEv.seq === 5 && fbEv.actions.some((a) => a.type === "visual-feedback" && a.text === "Make the list narrower"), JSON.stringify(fbEv.actions));
+  check("send carries the visual feedback action", fbEv.seq === 5 && fbEv.actions.some((a) => a.type === "visual-feedback" && a.text === "Make the list narrower" && a.subagent === false), JSON.stringify(fbEv.actions));
   check("pending feedback shown as sending", await page.locator("aside .msg.pending").count() === 1);
   // the agent answers the feedback at once and redraws in the background: version still 1, `drawing` set
   const v1at = s.visual.at;
@@ -354,11 +404,13 @@ try {
   check("inline confirm shown", await page.locator("#finish-yes").count() === 1);
   check("confirm keeps the green but stops blinking", await page.locator("#finish-yes.ready").count() === 1
     && (await page.locator("#finish-yes").evaluate((el) => getComputedStyle(el).animationName)) === "none");
+  cr = await readable(["#finish-yes", "color"], ["#finish-yes", "backgroundColor"], 4.5);
+  check("theme: the green confirm is readable in both themes", cr.ok, cr.extra);
   await page.locator("#finish-no").click();
   check("cancel keeps the finish button", await page.locator("#finish").count() === 1 && await page.locator("#finish-yes").count() === 0);
   await page.locator("#finish").click(); await page.locator("#finish-yes").click();
   const finEv = JSON.parse(await srv.nth(7));
-  check("finish fires immediately, staged actions first, finish last", finEv.seq === 6 && finEv.actions.length === 2 && finEv.actions[0].type === "thread" && finEv.actions[0].text === "final note" && finEv.actions[1].type === "finish", JSON.stringify(finEv.actions));
+  check("finish fires immediately, staged actions first, finish last", finEv.seq === 6 && finEv.actions.length === 2 && finEv.actions[0].type === "thread" && finEv.actions[0].text === "final note" && finEv.actions[1].type === "finish" && finEv.actions[1].subagent === false, JSON.stringify(finEv.actions));
   await page.waitForFunction(() => { const f = document.getElementById("finish"); return !!f && f.textContent.includes("Finishing…"); });
   check("finish button shows finishing; staging cleared", await page.locator("#finish").isDisabled() && await page.locator("#finish .spin").count() === 1 && (await page.locator("#send").textContent()) === "Send to Agent");
 
@@ -381,8 +433,131 @@ try {
   check("finished banner names the doc and the visual", (await page.locator("#banner").textContent()).includes("docs/e2e-design.md") && (await page.locator("#banner").textContent()).includes("docs/e2e-visual.html"));
   await page.locator("#visualize").click();
   check("finished: visual still viewable, composer and regenerate gone", await page.locator("body.visualize").count() === 1 && await page.locator("#feedback-in").count() === 0 && await page.locator("#regen").count() === 0);
+  check("finished: Use subagent is hidden, nothing left to draw", await page.locator("#use-subagent").isHidden());
+  await capture("subagent-hidden-finished.png");
+  if (evidence) writeFileSync(join(evidence, "page-events.jsonl"), readFileSync(join(session, "events.jsonl")));
   await page.locator("#visualize").click();
   check("staging locked when finished", await page.locator("#free").count() === 0 && await page.locator("#thread-in").count() === 0 && await page.locator("#finish").count() === 0);
+
+  // multi question: options toggle into a set, the recommendation is a set, the send carries options
+  s = fixture(); s.agent = { status: "waiting", since: new Date().toISOString(), handled: 6 };
+  s.questions.push({ id: "q5", round: 4, deps: [], title: "Which channels?", body: "Any mix.", multi: true,
+    options: [{ k: "A", text: "Email" }, { k: "B", text: "SMS" }, { k: "C", text: "Push" }],
+    rec: { options: ["A", "C"], why: "Both are free to send." }, status: "open", durable: false, updated: false, thread: [] });
+  s.questions.push({ id: "q6", round: 4, deps: [], title: "Answered multi", body: "Done.", multi: true,
+    options: [{ k: "A", text: "One" }, { k: "B", text: "Two" }, { k: "C", text: "Three" }],
+    rec: { options: ["A"], why: "Fine." }, status: "answered", answer: { kind: "option", options: ["A", "B"] }, durable: false, updated: false, thread: [] });
+  writeState(s);
+  await page.waitForFunction(() => !document.getElementById("banner").classList.contains("done"));
+  await page.locator(".item", { hasText: "Q5" }).click();
+  check("multi: hint shown, both recommended options marked, why names the set", await page.locator(".multi-hint").count() === 1 && await page.locator(".opt.rec").count() === 2 && (await page.locator(".why b").textContent()) === "Why A + C.");
+  await page.locator('.opt[data-opt="A"]').click();
+  await page.locator('.opt[data-opt="B"]').click();
+  check("multi: two clicks stage two options", await page.locator(".opt.staged").count() === 2 && (await page.locator(".staged-line").textContent()).includes("Staged: options A + B") && (await page.locator("#staged-list").textContent()).includes("Q5 → A + B"));
+  await page.locator('.opt[data-opt="B"]').click();
+  await page.locator('.opt[data-opt="C"]').click();
+  check("multi: toggling to the recommended set stages an accept", (await page.locator(".staged-line").textContent()).includes("Staged: accept A + C"));
+  await page.locator('.opt[data-opt="A"]').click(); await page.locator('.opt[data-opt="C"]').click();
+  check("multi: an emptied set unstages the answer", await page.locator(".staged-line").count() === 0 && await page.locator(".item .mark.staged").count() === 0);
+  await page.locator("#accept-rec").click();
+  check("multi: accept link stages the recommended set", (await page.locator(".staged-line").textContent()).includes("Staged: accept A + C"));
+  await page.locator(".item", { hasText: "Q6" }).click();
+  check("multi: recorded answer shows every chosen option, nav mark names the set", await page.locator(".opt.chosen").count() === 2 && (await page.locator(".item", { hasText: "Q6" }).locator(".mark").textContent()).includes("A + B"));
+  await page.locator('.opt[data-opt="C"]').click();
+  check("multi: changing an answer starts from the recorded set", await page.locator(".opt.staged").count() === 3 && await page.locator(".opt.chosen").count() === 0);
+  await page.locator("#send").click();
+  const multiEv = JSON.parse(await srv.nth(2));
+  const a5 = multiEv.actions.find((a) => a.q === "q5"), a6 = multiEv.actions.find((a) => a.q === "q6");
+  check("multi: send carries the option sets", a5 && a5.kind === "accept" && JSON.stringify(a5.options) === '["A","C"]' && a6 && a6.kind === "option" && JSON.stringify(a6.options) === '["A","B","C"]', JSON.stringify(multiEv.actions));
+
+  // Typed but never added (issue #32 follow-up): Send must not silently drop what is in a
+  // discussion box. Typed discussion text, on any question, and typed visual feedback go with
+  // the send as if added. A typed free-text answer would answer the question, so it stays out
+  // of the send, stays in its box, and the footer says so before you press Send.
+  s.agent = { status: "waiting", since: new Date().toISOString(), handled: multiEv.seq };
+  s.visual = { kind: "prototype", version: 2, at: new Date().toISOString(), note: "v2: narrower list", thread: [] };
+  writeState(s);
+  await page.waitForFunction((n) => document.getElementById("agent-status").textContent.includes("handled #" + n), multiEv.seq);
+  await page.locator(".item", { hasText: "Q4" }).click();
+  await page.locator("#free").fill("Unstaged free answer");
+  check("typed: a free answer alone warns without enabling Send", await page.locator("#send").isDisabled() && (await page.locator("#send").textContent()) === "Send to Agent" && /Q4/.test(await page.locator("#unstaged-note").textContent()));
+  await capture("typed-free-answer-only.png");
+  await page.locator(".item", { hasText: "Q3" }).click();
+  await page.locator("#thread-in").fill("Typed on Q3, never added");
+  check("typed: discussion text alone enables Send and is counted", await page.locator("#send").isEnabled() && (await page.locator("#send").textContent()) === "Send 1 to Agent", await page.locator("#send").textContent());
+  check("typed: footer names the typed message", /Q3[^·]*typed/.test(await page.locator("#staged-list").textContent()), await page.locator("#staged-list").textContent());
+  await page.locator(".item", { hasText: "Q5" }).click();
+  await page.locator("#thread-in").fill("Typed on Q5, also not added");
+  await page.locator("#visualize").click();
+  await page.locator("#feedback-in").fill("Typed visual note, not added");
+  await page.locator("#visualize").click();
+  await page.locator(".item", { hasText: "Q4" }).click();
+  await page.locator("#free").fill("Unstaged free answer");
+  check("typed: a free-text answer is not counted, the footer warns it will not be sent", (await page.locator("#send").textContent()) === "Send 3 to Agent" && /Q4/.test(await page.locator("#unstaged-note").textContent()), `${await page.locator("#send").textContent()} | ${await page.locator("#staged-list").textContent()}`);
+  await capture("typed-not-added-footer.png");
+  const rejectSend = (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: false, error: "deliberate rejection" }) });
+  await page.route("**/send", rejectSend);
+  await page.locator(".item", { hasText: "Q3" }).click();
+  await page.locator("#send").click();
+  await page.waitForFunction(() => document.getElementById("send-why").textContent.includes("deliberate rejection"));
+  check("typed: failed Send clears the box and exposes a removable staged note", (await page.locator("#thread-in").inputValue()) === "" && await page.locator("aside .msg.staged [data-rm]").count() === 1);
+  await page.reload();
+  await page.locator(".item").first().waitFor();
+  for (const id of ["Q3", "Q5"]) {
+    await page.locator(".item", { hasText: id }).click();
+    check(`typed: failed Send persists the staged note on ${id}`, (await page.locator("#thread-in").inputValue()) === "" && await page.locator("aside .msg.staged [data-rm]").count() === 1);
+  }
+  await page.locator("#visualize").click();
+  check("typed: failed Send persists removable visual feedback", (await page.locator("#feedback-in").inputValue()) === "" && await page.locator("aside .msg.staged [data-rmf]").count() === 1);
+  await page.locator("aside [data-rmf]").click();
+  check("typed: failed feedback can be removed", await page.locator("aside .msg.staged").count() === 0);
+  await page.locator("#feedback-in").fill("Typed visual note, not added");
+  await page.locator("#visualize").click();
+  await page.locator(".item", { hasText: "Q3" }).click();
+  await page.locator("aside [data-rm]").click();
+  check("typed: failed discussion can be removed", await page.locator("aside .msg.staged").count() === 0);
+  await page.locator("#thread-in").fill("Typed on Q3, never added");
+  await page.locator(".item", { hasText: "Q4" }).click();
+  await page.unroute("**/send", rejectSend);
+  await page.locator("#send").click();
+  const typedEv = JSON.parse(await srv.nth(3));
+  const typedShape = typedEv.actions.map((a) => `${a.q || "visual"}:${a.type}:${a.text || ""}`).sort();
+  check("typed: the send carries discussion text from the current and navigated-away questions and the visual note, and no free-text answer",
+    JSON.stringify(typedShape) === JSON.stringify(["q3:thread:Typed on Q3, never added", "q5:thread:Typed on Q5, also not added", "visual:visual-feedback:Typed visual note, not added"]), JSON.stringify(typedEv.actions));
+  await page.waitForFunction((n) => document.getElementById("staged-list").textContent.includes("Sent #" + n), typedEv.seq);
+  check("typed: the free-text answer is still in its box after the send", (await page.locator("#free").inputValue()) === "Unstaged free answer");
+  await capture("typed-free-answer-preserved.png");
+  await page.locator(".item", { hasText: "Q3" }).click();
+  check("typed: the carried box is cleared and the message shows as sending", (await page.locator("#thread-in").inputValue()) === "" && (await page.locator("aside .msg.pending").textContent()).includes("Typed on Q3, never added"));
+  await capture("typed-discussion-sending.png");
+  await page.locator(".item", { hasText: "Q5" }).click();
+  check("typed: the navigated-away box is cleared too", (await page.locator("#thread-in").inputValue()) === "");
+  await page.locator("#visualize").click();
+  check("typed: the visual feedback box is cleared", (await page.locator("#feedback-in").inputValue()) === "");
+  await capture("typed-feedback-sending.png");
+  await page.locator("#visualize").click();
+  await page.reload();
+  await page.locator(".item").first().waitFor();
+  await page.locator(".item", { hasText: "Q3" }).click();
+  check("typed: the cleared box stays cleared after a reload", (await page.locator("#thread-in").inputValue()) === "");
+  // Finish ships everything staged, so it ships typed discussion text too.
+  s.agent = { status: "waiting", since: new Date().toISOString(), handled: typedEv.seq };
+  writeState(s);
+  await page.waitForFunction((n) => document.getElementById("agent-status").textContent.includes("handled #" + n), typedEv.seq);
+  await page.locator("#thread-in").fill("Typed before finishing");
+  await page.route("**/send", rejectSend);
+  await page.locator("#finish").click(); await page.locator("#finish-yes").click();
+  await page.waitForFunction(() => document.getElementById("send-why").textContent.includes("deliberate rejection"));
+  check("typed: failed Finish clears the box and exposes a removable staged note", (await page.locator("#thread-in").inputValue()) === "" && await page.locator("aside .msg.staged [data-rm]").count() === 1);
+  await page.reload();
+  await page.locator(".item").first().waitFor();
+  await page.locator(".item", { hasText: "Q3" }).click();
+  check("typed: failed Finish persists its staged note", (await page.locator("#thread-in").inputValue()) === "" && (await page.locator("aside .msg.staged").textContent()).includes("Typed before finishing"));
+  await page.unroute("**/send", rejectSend);
+  await page.locator("#finish").click(); await page.locator("#finish-yes").click();
+  const typedFin = JSON.parse(await srv.nth(4));
+  check("typed: finish carries typed discussion text before the finish action", typedFin.actions.length === 2 && typedFin.actions[0].q === "q3" && typedFin.actions[0].type === "thread" && typedFin.actions[0].text === "Typed before finishing" && typedFin.actions[1].type === "finish", JSON.stringify(typedFin.actions));
+  if (evidence) writeFileSync(join(evidence, "typed-note-events.json"), JSON.stringify({ send: typedEv, finish: typedFin }, null, 2));
 
   // The server-gone step above produces ERR_CONNECTION_REFUSED fetch failures by design.
   const real = errors.filter((e) => !e.includes("ERR_CONNECTION_REFUSED"));

@@ -1,16 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="__GRILL_THEME__">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>grill</title>
 <style>
   :root {
-    --bg: #f7f4ee; --panel: #ffffff; --ink: #1f1c18; --ink-2: #625b51; --ink-3: #9a9285;
-    --rule: #e6e0d4; --accent: #9a3a26; --ok: #3d6b4a; --ok-soft: #e3eee5; --stage: #b8791f; --stage-soft: #f8ecd2; --warn-soft: #fbe9e4;
+    color-scheme: light dark;
+    --bg: light-dark(#f7f4ee, #16130f); --panel: light-dark(#ffffff, #1e1a15); --ink: light-dark(#1f1c18, #ece7dd);
+    --ink-2: light-dark(#625b51, #b3aa9c); --ink-3: light-dark(#9a9285, #7d7568); --rule: light-dark(#e6e0d4, #322c24); --hover: light-dark(#efebe3, #2a241d);
+    --accent: light-dark(#9a3a26, #e0785c); --ok: light-dark(#3d6b4a, #7fb08d); --ok-soft: light-dark(#e3eee5, #1f2b22); --ok-deep: light-dark(#2f5a3b, #6ea07c); --ok-pulse: light-dark(#7fb08d, #a9d6b6);
+    --stage: light-dark(#b8791f, #d9a441); --stage-soft: light-dark(#f8ecd2, #2e2616); --warn-soft: light-dark(#fbe9e4, #38211b);
+    /* Text and ticks on an --accent or --ok fill. Those fills turn light in the dark theme, where white on them drops to 3:1 and below. */
+    --on-fill: light-dark(#ffffff, #16130f);
     --serif: "Iowan Old Style", Charter, Georgia, serif;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -42,8 +49,19 @@
   #progress::after { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; background: var(--stage); animation: slide 1.4s ease-in-out infinite; }
   @keyframes slide { from { left: -30%; } to { left: 100%; } }
   #terms-toggle, #visualize { font-size: 12px; padding: 4px 10px; }
+  #theme-toggle { display: inline-flex; align-items: center; padding: 4px 8px; }
+  #theme-toggle svg { display: none; width: 15px; height: 15px; }
+  #theme-toggle[data-mode="system"] .i-system, #theme-toggle[data-mode="light"] .i-light, #theme-toggle[data-mode="dark"] .i-dark { display: block; }
   #visualize .spin { width: 9px; height: 9px; margin-right: 4px; }
   #visualize:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); }
+  #subagent-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+  #subagent-opt[hidden] { display: none; }
+  #subagent-opt input { margin: 0; accent-color: var(--accent); }
+  #subagent-opt label { cursor: pointer; }
+  .info { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--ink-3); color: var(--ink-3); font: italic 600 10px/1 var(--serif); cursor: help; }
+  .info:hover, .info:focus { color: var(--ink); border-color: var(--ink); outline: none; }
+  .info::after { content: attr(data-tip); display: none; position: absolute; top: calc(100% + 8px); right: -8px; width: 260px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.08); color: var(--ink-2); font: 12px/1.45 system-ui, sans-serif; font-style: normal; white-space: normal; text-align: left; z-index: 6; }
+  .info:hover::after, .info:focus::after { display: block; }
   #terms { display: none; position: absolute; right: 24px; top: 100%; width: 420px; max-height: 60vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 16px; box-shadow: 0 8px 24px rgba(0,0,0,.08); z-index: 5; }
   #terms.show { display: block; }
   .term { padding: 8px 0; border-bottom: 1px solid var(--rule); font-size: 14px; } .term:last-child { border-bottom: 0; }
@@ -54,7 +72,7 @@
   nav .round { padding: 16px 20px 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); display: flex; justify-content: space-between; }
   nav .round.current { color: var(--accent); }
   .item { display: grid; grid-template-columns: 30px 1fr auto; gap: 8px; align-items: baseline; padding: 8px 20px; cursor: pointer; }
-  .item:hover { background: #efebe3; }
+  .item:hover { background: var(--hover); }
   .item.selected { background: var(--panel); box-shadow: inset 3px 0 0 var(--accent); }
   .item .id { font-size: 12px; color: var(--ink-3); }
   .item .t { font-size: 14px; }
@@ -74,7 +92,7 @@
   #visual-strip .right { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--stage); }
   #visual-strip a { color: var(--ink-3); text-decoration: none; font-size: 13px; } #visual-strip a:hover { color: var(--accent); }
   #visual-frame { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
-  #visual-wait { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: var(--ink-3); font-size: 14px; background: #fff; }
+  #visual-wait { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: var(--ink-3); font-size: 14px; background: var(--panel); }
   #visual-wait[hidden], #visual-frame[hidden] { display: none; }
 
   main { grid-row: 3; grid-column: 2; overflow-y: auto; padding: 36px 44px 60px; background: var(--panel); }
@@ -90,6 +108,7 @@
   .opt { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: start; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); cursor: pointer; }
   .opt .check { width: 20px; height: 20px; color: var(--ok); visibility: hidden; align-self: center; }
   .opt .check svg, .mark svg { display: block; width: 100%; height: 100%; }
+  .opt .check path, .mark path { stroke: var(--on-fill); }
   .opt:hover { border-color: var(--ink-3); }
   .opt .k { font-family: var(--serif); font-size: 18px; line-height: 1.2; color: var(--ink-3); }
   .opt.rec { border-color: var(--accent); } .opt.rec .k { color: var(--accent); }
@@ -102,6 +121,8 @@
   .opt.staged { border-color: var(--stage); box-shadow: 0 0 0 1px var(--stage); background: var(--stage-soft); }
   .opt.pending { border-color: var(--stage); border-style: dashed; } .opt.pending .k { color: var(--stage); } .opt .check.pending { visibility: visible; color: var(--stage); display: flex; align-items: center; justify-content: center; }
   .locked .opt { cursor: default; } .locked .opt:hover { border-color: var(--rule); }
+  .multi-hint { margin: 16px 0 0; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+  .multi-hint + .opts { margin-top: 8px; }
   .why { margin: 14px 0 0; font-size: 14px; color: var(--ink-2); white-space: pre-line; } .why b { color: var(--accent); font-weight: 600; }
   .staged-line { margin-top: 10px; font-size: 14px; color: var(--stage); } .staged-line a { color: var(--ink-3); font-size: 12px; margin-left: 8px; }
   .pending-line { margin-top: 10px; font-size: 14px; color: var(--stage); display: flex; align-items: center; gap: 8px; }
@@ -111,7 +132,7 @@
   textarea:focus { outline: none; border-color: var(--ink-3); }
   button { font-family: var(--sans); font-weight: 500; font-size: 14px; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); cursor: pointer; white-space: nowrap; }
   button:hover { border-color: var(--ink-3); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; } button.primary:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-fill); } button.primary:hover { border-color: var(--accent); }
   button:disabled, button.primary:disabled { background: var(--ink-3); border-color: var(--ink-3); color: #fff; cursor: default; }
   main .empty { color: var(--ink-3); font-size: 14px; }
 
@@ -141,13 +162,13 @@
 
   footer { grid-row: 4; grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 24px; border-top: 1px solid var(--rule); background: var(--panel); }
   footer .staged-list { font-size: 13px; color: var(--ink-2); flex: 1; } footer .staged-list b { color: var(--stage); } footer .staged-list .sent { color: var(--stage); display: inline-flex; align-items: center; gap: 6px; }
-  #finish.ready { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 600; animation: ready 1.2s ease-in-out infinite; }
-  #finish.ready:hover { background: #2f5a3b; border-color: #2f5a3b; }
+  #finish.ready { background: var(--ok); border-color: var(--ok); color: var(--on-fill); font-weight: 600; animation: ready 1.2s ease-in-out infinite; }
+  #finish.ready:hover { background: var(--ok-deep); border-color: var(--ok-deep); }
   /* The inline confirm keeps the green so the eye stays on it, but stops blinking:
      blinking means "you can act", solid green means "confirm here". */
-  #finish-yes.ready { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 600; }
-  #finish-yes.ready:hover { background: #2f5a3b; border-color: #2f5a3b; }
-  @keyframes ready { 0%, 100% { background-color: var(--ok); border-color: var(--ok); } 50% { background-color: #7fb08d; border-color: #7fb08d; } }
+  #finish-yes.ready { background: var(--ok); border-color: var(--ok); color: var(--on-fill); font-weight: 600; }
+  #finish-yes.ready:hover { background: var(--ok-deep); border-color: var(--ok-deep); }
+  @keyframes ready { 0%, 100% { background-color: var(--ok); border-color: var(--ok); } 50% { background-color: var(--ok-pulse); border-color: var(--ok-pulse); } }
   footer .hint { font-size: 12px; color: var(--ink-3); } footer .warn { font-size: 12px; color: var(--accent); }
   footer .confirm { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; }
   #finish:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); animation: none; } #finish .spin { margin-right: 4px; }
@@ -222,7 +243,13 @@
   <button id="terms-toggle" type="button">Terms</button>
   <div id="terms"></div>
   <button id="visualize" type="button" hidden>Visualize</button>
+  <span id="subagent-opt" hidden><input type="checkbox" id="use-subagent" checked><label for="use-subagent">Use subagent</label><span id="subagent-info" class="info" tabindex="0" role="img" aria-label="Using subagents frees up your main context for grilling. You can switch this off once you are done grilling to make the visualization build faster." data-tip="Using subagents frees up your main context for grilling. You can switch this off once you are done grilling to make the visualization build faster.">i</span></span>
   <span class="status"><span class="dot" id="agent-dot"></span><span id="agent-status">connecting…</span></span>
+  <button id="theme-toggle" type="button" data-mode="system">
+    <svg class="i-system" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.7a6.3 6.3 0 0 1 0 12.6z" fill="currentColor"/></svg>
+    <svg class="i-light" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3 3l1.3 1.3M11.7 11.7L13 13M13 3l-1.3 1.3M4.3 11.7L3 13"/></g></svg>
+    <svg class="i-dark" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.5A6 6 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+  </button>
   <div id="progress"></div>
 </header>
 <nav id="nav"><div class="empty">Connecting…</div></nav>
@@ -254,7 +281,7 @@ const withToken = (p) => LAN_TOKEN ? p + (p.includes("?") ? "&" : "?") + "t=" + 
 let S = null, raw = null, selected = null, storeKey = null;
 let lastOk = Date.now(), gone = false, confirmFinish = false, intentOpen = false;
 let local = fresh();
-function fresh() { return { staged: {}, pending: [], drafts: {}, view: "questions", vfeedback: [] }; }
+function fresh() { return { staged: {}, pending: [], drafts: {}, view: "questions", vfeedback: [], subagent: true }; }
 function load() { local = fresh(); try { const v = localStorage.getItem(storeKey); if (v) local = Object.assign(fresh(), JSON.parse(v)); } catch {} }
 function save() { try { localStorage.setItem(storeKey, JSON.stringify(local)); } catch {} }
 
@@ -271,6 +298,13 @@ const hasVisual = () => { const v = visual(); return !!v && (Number(v.version) |
 const drawing = () => { const v = visual(); return v && v.drawing && typeof v.drawing === "object" ? v.drawing : null; };
 const drawStuck = () => { const d = drawing(); return !!d && Date.now() - Date.parse(d.since || 0) > DRAW_GRACE_MS; };
 const activeView = () => (local.view === "visualize" && hasVisual() ? "visualize" : "questions");
+// A multi question takes a set of options: rec.options and answer.options. A single one
+// takes rec.option and answer.option. keysOf reads either shape, so callers need not care.
+const isMulti = (q) => !!(q && q.multi);
+const keysOf = (x) => (x && Array.isArray(x.options) ? x.options : x && x.option ? [x.option] : []);
+const recKeys = (q) => keysOf(q && q.rec);
+const sameKeys = (a, b) => a.length === b.length && a.every((k) => b.includes(k));
+const keyLabel = (x) => keysOf(x).join(" + ");
 const timeOf = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
 const fmtMs = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
 
@@ -305,6 +339,21 @@ function onState() {
 const st = (id) => (local.staged[id] = local.staged[id] || {});
 const prune = (id) => { const s = local.staged[id]; if (s && !s.answer && !s.defer && !s.reopen && !(s.thread && s.thread.length)) delete local.staged[id]; };
 function stageAnswer(id, answer) { const s = st(id); s.answer = answer; delete s.defer; delete s.reopen; commit(); }
+// Clicking an option of a multi question toggles it in the staged set. The set starts from
+// what is staged, else from the recorded answer, so changing an answer edits it instead of
+// starting over. An emptied set unstages the answer.
+function toggleOption(q, k) {
+  const s = local.staged[q.id];
+  const base = s && s.answer && s.answer.kind !== "text" ? keysOf(s.answer) : q.status === "answered" && !(s && s.answer) ? keysOf(q.answer) : [];
+  const next = base.includes(k) ? base.filter((x) => x !== k) : base.concat(k);
+  if (!next.length) return clearStaged(q.id);
+  stageKeys(q, next);
+}
+function stageKeys(q, keys) {
+  const order = (q.options || []).map((o) => o.k);
+  const sorted = keys.slice().sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  stageAnswer(q.id, { kind: sameKeys(sorted, recKeys(q)) ? "accept" : "option", options: sorted });
+}
 function stageThread(id, text) { const s = st(id); (s.thread = s.thread || []).push(text); if (local.drafts[id]) delete local.drafts[id].thread; commit(); }
 function stageDefer(id) { const s = st(id); s.defer = true; delete s.answer; delete s.reopen; commit(); }
 function stageReopen(id) { const s = st(id); s.reopen = true; delete s.answer; delete s.defer; commit(); }
@@ -317,12 +366,31 @@ const lastPending = () => local.pending[local.pending.length - 1] || null;
 const isExploring = (id) => pendingActions(id).some((a) => a.type === "explore");
 const pendingOfType = (t) => local.pending.flatMap((p) => p.actions.filter((a) => a.type === t));
 const isVisualizing = () => pendingOfType("visualize").length > 0 || (!!drawing() && !drawStuck());
+// Every draw request says whether the agent should hand the drawing to a subagent (the default,
+// which keeps the markup out of the interview's context) or draw it inline, which is faster once
+// the grilling is done.
+const useSubagent = () => local.subagent !== false;
 const isFinishing = () => pendingOfType("finish").length > 0;
 const allSettled = () => qs().length > 0 && !qs().some(isOpen);
 function stagedCount() {
-  let n = local.vfeedback.length;
+  let n = local.vfeedback.length + typedNotes().length;
   for (const s of Object.values(local.staged)) n += (s.answer ? 1 : 0) + (s.defer ? 1 : 0) + (s.reopen ? 1 : 0) + (s.thread ? s.thread.length : 0);
   return n;
+}
+// Text typed in a discussion or feedback box but never added used to be left behind by Send
+// without a word (#32). A note commits you to nothing, so it now goes with the send as if
+// added: typedNotes lists every such box, on any question, and carryTyped stages them. A typed
+// free-text answer is different: it would answer the question, so it is never carried;
+// typedAnswers names those so the footer can say they will not be sent.
+const typed = (d, k) => (d && typeof d[k] === "string" ? d[k].trim() : "");
+const typedNotes = () => Object.entries(local.drafts).filter(([id, d]) => typed(d, "thread") && (id === "__visual" ? hasVisual() : !!byId(id))).map(([id, d]) => ({ id, text: typed(d, "thread") }));
+const typedAnswers = () => Object.entries(local.drafts).filter(([id, d]) => id !== "__visual" && typed(d, "free") && byId(id)).map(([id]) => id);
+function carryTyped() {
+  for (const { id, text } of typedNotes()) {
+    if (id === "__visual") local.vfeedback.push(text); else (st(id).thread = st(id).thread || []).push(text);
+    delete local.drafts[id].thread;
+  }
+  commit();
 }
 function stageFeedback(text) { local.vfeedback.push(text); if (local.drafts.__visual) delete local.drafts.__visual.thread; commit(); }
 function removeFeedback(i) { local.vfeedback.splice(i, 1); commit(); }
@@ -331,10 +399,10 @@ function buildActions() {
   for (const [q, s] of Object.entries(local.staged)) {
     if (s.reopen) out.push({ q, type: "reopen" });
     if (s.defer) out.push({ q, type: "defer" });
-    if (s.answer) { const a = { q, type: "answer", kind: s.answer.kind }; if (s.answer.option) a.option = s.answer.option; if (s.answer.text) a.text = s.answer.text; out.push(a); }
+    if (s.answer) { const a = { q, type: "answer", kind: s.answer.kind }; if (s.answer.option) a.option = s.answer.option; if (s.answer.options) a.options = s.answer.options; if (s.answer.text) a.text = s.answer.text; out.push(a); }
     for (const t of s.thread || []) out.push({ q, type: "thread", text: t });
   }
-  for (const t of local.vfeedback) out.push({ type: "visual-feedback", text: t });
+  for (const t of local.vfeedback) out.push({ type: "visual-feedback", text: t, subagent: useSubagent() });
   return out;
 }
 function sendState(needStaged = true) {
@@ -363,6 +431,7 @@ async function post(actions) {
 }
 async function send() {
   const { disabled } = sendState(); if (disabled) return;
+  carryTyped();
   const actions = buildActions();
   const j = await post(actions);
   if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.staged = {}; local.vfeedback = []; confirmFinish = false; commit(); }
@@ -370,14 +439,15 @@ async function send() {
 // Finish is not staged: confirming ships everything staged plus the finish action in one event, right away.
 async function finishNow() {
   if (sendState(false).disabled || isFinishing()) return;
-  const actions = buildActions().concat([{ type: "finish" }]);
+  carryTyped();
+  const actions = buildActions().concat([visual() ? { type: "finish", subagent: useSubagent() } : { type: "finish" }]);
   const j = await post(actions);
   if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.staged = {}; local.vfeedback = []; confirmFinish = false; commit(); }
 }
 // Visualize is not staged either: the first click (and Regenerate) is a generate request, like Explore deeper.
 async function visualize() {
   if (sendState(false).disabled || isVisualizing()) return;
-  const actions = [{ type: "visualize" }];
+  const actions = [{ type: "visualize", subagent: useSubagent() }];
   const j = await post(actions);
   if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.view = "visualize"; commit(); }
 }
@@ -447,6 +517,7 @@ function renderHeader() {
 }
 function renderVisualizeButton() {
   const b = $("visualize"); const v = visual(); const lk = locked();
+  $("subagent-opt").hidden = lk; $("use-subagent").checked = useSubagent();
   if (hasVisual()) { b.hidden = false; b.disabled = false; b.title = ""; b.textContent = activeView() === "visualize" ? "Questions" : `Visual · v${esc(v.version)}`; return; }
   if (lk) { b.hidden = true; return; }
   b.hidden = false;
@@ -502,7 +573,7 @@ function renderNav() {
       el.className = "item" + (q.id === selected ? " selected" : "") + (q.updated ? " updated" : "");
       const mark = s ? `<span class="mark staged">staged</span>`
         : pendingActions(q.id).some((a) => a.type !== "explore") ? `<span class="mark pending"><span class="spin"></span>sent</span>`
-        : `<span class="mark ${esc(q.status)}">${q.status === "answered" ? CHECK + esc((q.answer && q.answer.option) || "text") : esc(q.status)}</span>`;
+        : `<span class="mark ${esc(q.status)}">${q.status === "answered" ? CHECK + esc(keyLabel(q.answer) || "text") : esc(q.status)}</span>`;
       el.innerHTML = `<span class="id">${esc(q.id).toUpperCase()}</span><span class="t">${esc(q.title)}</span>${mark}`;
       el.onclick = () => { selected = q.id; render(); };
       nav.appendChild(el);
@@ -524,18 +595,20 @@ function renderMain() {
   const pend = pendingActions(q.id);
   const pendAnswer = pend.filter((a) => a.type === "answer").pop() || null;
   const opts = (q.options || []).map((o) => {
-    const isRec = rec.option === o.k, chosen = q.answer && q.answer.option === o.k, staged = s.answer && s.answer.option === o.k, pending = !staged && pendAnswer && pendAnswer.option === o.k;
+    // A multi question shows one set at a time: the staged set, else the one in flight, else the recorded one.
+    const shadow = isMulti(q) && (s.answer || pendAnswer);
+    const isRec = recKeys(q).includes(o.k), chosen = !shadow && keysOf(q.answer).includes(o.k), staged = keysOf(s.answer).includes(o.k), pending = !staged && !(isMulti(q) && s.answer) && keysOf(pendAnswer).includes(o.k);
     return `<li class="opt${isRec ? " rec" : ""}${chosen ? " chosen" : ""}${staged ? " staged" : ""}${pending ? " pending" : ""}" data-opt="${esc(o.k)}"><span class="k">${esc(o.k)}</span><span>${isRec ? `<div class="tag">Recommended</div>` : ""}${esc(o.text)}</span>${pending ? `<span class="check pending"><span class="spin"></span></span>` : `<span class="check">${CHECK}</span>`}</li>`;
   }).join("") + (q.status === "answered" && q.answer && q.answer.kind === "text" && q.answer.text
     ? `<li class="opt chosen text-answer"><span class="k"></span><span><div class="tag">Your answer</div>${esc(q.answer.text)}</span><span class="check">${CHECK}</span></li>` : "")
     + (pendAnswer && pendAnswer.kind === "text" && pendAnswer.text
     ? `<li class="opt pending text-answer"><span class="k"></span><span><div class="tag">Your answer · sending</div>${esc(pendAnswer.text)}</span><span class="check pending"><span class="spin"></span></span></li>` : "");
-  const why = rec.option ? `<p class="why"><b>Why ${esc(rec.option)}.</b> ${esc(rec.why)}</p>`
+  const why = recKeys(q).length ? `<p class="why"><b>Why ${esc(keyLabel(rec))}.</b> ${esc(rec.why)}</p>`
     : rec.text ? `<p class="why"><b>Suggested.</b> ${esc(rec.text)}${rec.why ? " — " + esc(rec.why) : ""}</p>` : rec.why ? `<p class="why">${esc(rec.why)}</p>` : "";
   let stagedLine = "";
   if (s.defer) stagedLine = "Staged: defer this question";
   else if (s.reopen) stagedLine = "Staged: reopen this question";
-  else if (s.answer) stagedLine = s.answer.kind === "accept" ? `Staged: accept ${esc(s.answer.option)}` : s.answer.option ? `Staged: option ${esc(s.answer.option)}` : `Staged text: “${esc(s.answer.text)}”`;
+  else if (s.answer) stagedLine = s.answer.kind === "accept" ? `Staged: accept ${esc(keyLabel(s.answer))}` : keysOf(s.answer).length > 1 ? `Staged: options ${esc(keyLabel(s.answer))}` : keysOf(s.answer).length ? `Staged: option ${esc(keyLabel(s.answer))}` : `Staged text: “${esc(s.answer.text)}”`;
   if (stagedLine) stagedLine = `<div class="staged-line">${stagedLine}<a href="#" id="clear-staged">clear</a></div>`;
   const pendBits = pend.filter((a) => a.type === "defer" || a.type === "reopen").map((a) => a.type);
   if (pendBits.length) stagedLine += `<div class="pending-line"><span class="spin"></span>Sent: ${pendBits.join(", ")} this question · waiting for the agent</div>`;
@@ -544,7 +617,7 @@ function renderMain() {
         <textarea id="free" placeholder="${q.status === "answered" ? "Change your answer, or add nuance…" : (q.options || []).length ? "Free-text answer, if none of the options fit…" : "Your answer…"}">${esc(d.free || "")}</textarea>
         <button id="stage-text" type="button" title="Stage text (⌘↩)">Stage text</button>
       </div>
-      <div class="links">${isOpen(q) ? `<a href="#" id="defer">Defer this question</a>` : `<a href="#" id="reopen">Reopen this question</a>`}</div>`;
+      <div class="links">${isMulti(q) && recKeys(q).length > 1 ? `<a href="#" id="accept-rec">Accept the recommended ${esc(keyLabel(rec))}</a>` : ""}${isOpen(q) ? `<a href="#" id="defer">Defer this question</a>` : `<a href="#" id="reopen">Reopen this question</a>`}</div>`;
   const exploring = isExploring(q.id);
   const gate = sendState(false);
   const exploreBtn = (q.options || []).length && !lk
@@ -554,15 +627,17 @@ function renderMain() {
       <div class="crumb">${crumb.join("")}</div>
       <div class="title-row"><h2>${esc(q.title)}</h2>${exploreBtn}</div>
       <p class="body">${esc(q.body)}</p>
+      ${opts && isMulti(q) ? `<p class="multi-hint">Pick one or more</p>` : ""}
       ${opts ? `<ul class="opts">${opts}</ul>` : ""}
       ${why}${stagedLine}${controls}
     </article>`;
   main.querySelectorAll("[data-go]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); if (byId(a.dataset.go)) { selected = a.dataset.go; render(); } }));
   if (lk) return;
-  main.querySelectorAll(".opt:not(.text-answer)").forEach((o) => (o.onclick = () => stageAnswer(q.id, { kind: o.dataset.opt === rec.option ? "accept" : "option", option: o.dataset.opt })));
+  main.querySelectorAll(".opt:not(.text-answer)").forEach((o) => (o.onclick = () => isMulti(q) ? toggleOption(q, o.dataset.opt) : stageAnswer(q.id, { kind: o.dataset.opt === rec.option ? "accept" : "option", option: o.dataset.opt })));
+  const ar = $("accept-rec"); if (ar) ar.onclick = (e) => { e.preventDefault(); stageKeys(q, recKeys(q)); };
   const ex = $("explore"); if (ex) ex.onclick = () => explore(q.id);
   $("stage-text").onclick = () => { const t = $("free").value.trim(); if (t) { (local.drafts[q.id] = local.drafts[q.id] || {}).free = ""; stageAnswer(q.id, { kind: "text", text: t }); } };
-  $("free").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).free = e.target.value; save(); };
+  $("free").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).free = e.target.value; save(); renderFooter(); };
   const cl = $("clear-staged"); if (cl) cl.onclick = (e) => { e.preventDefault(); clearStaged(q.id); };
   const df = $("defer"); if (df) df.onclick = (e) => { e.preventDefault(); stageDefer(q.id); };
   const ro = $("reopen"); if (ro) ro.onclick = (e) => { e.preventDefault(); stageReopen(q.id); };
@@ -583,7 +658,7 @@ function renderAside() {
     const li = (xs) => `<ul>${(Array.isArray(xs) ? xs : []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
     explore = `<div class="explore-head">Pros and cons${q.explore.at ? " · " + timeOf(q.explore.at) : ""}</div>
       <table class="procon"><thead><tr><th></th><th>Pros</th><th>Cons</th></tr></thead><tbody>${q.explore.rows.map((r) =>
-        `<tr><td class="k${rec.option === r.option ? " rec" : ""}">${esc(r.option)}</td><td class="pro">${li(r.pros)}</td><td class="con">${li(r.cons)}</td></tr>`).join("")}</tbody></table>`;
+        `<tr><td class="k${recKeys(q).includes(r.option) ? " rec" : ""}">${esc(r.option)}</td><td class="pro">${li(r.pros)}</td><td class="con">${li(r.cons)}</td></tr>`).join("")}</tbody></table>`;
   }
   if (isExploring(q.id)) explore += `<div class="explore-wait"><span class="spin"></span> Exploring: the agent is writing a pros and cons table for this question.</div>`;
   aside.innerHTML = `
@@ -593,7 +668,7 @@ function renderAside() {
   aside.querySelectorAll("[data-rm]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); removeThread(q.id, Number(a.dataset.rm)); }));
   if (lk) return;
   $("stage-thread").onclick = () => { const t = $("thread-in").value.trim(); if (t) stageThread(q.id, t); };
-  $("thread-in").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).thread = e.target.value; save(); };
+  $("thread-in").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).thread = e.target.value; save(); renderFooter(); };
 }
 function renderFeedback(aside) {
   const v = visual(); const lk = locked(); const d = local.drafts.__visual || {};
@@ -608,21 +683,24 @@ function renderFeedback(aside) {
   aside.querySelectorAll("[data-rmf]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); removeFeedback(Number(a.dataset.rmf)); }));
   if (lk) return;
   $("stage-feedback").onclick = () => { const t = $("feedback-in").value.trim(); if (t) stageFeedback(t); };
-  $("feedback-in").oninput = (e) => { (local.drafts.__visual = local.drafts.__visual || {}).thread = e.target.value; save(); };
+  $("feedback-in").oninput = (e) => { (local.drafts.__visual = local.drafts.__visual || {}).thread = e.target.value; save(); renderFooter(); };
 }
 function renderFooter() {
   const n = stagedCount(); const list = $("staged-list");
   const parts = Object.entries(local.staged).map(([id, s]) => {
     const bits = [];
     if (s.reopen) bits.push("reopen"); if (s.defer) bits.push("defer");
-    if (s.answer) bits.push(s.answer.option ? "→ " + s.answer.option : "→ text");
+    if (s.answer) bits.push(keysOf(s.answer).length ? "→ " + keyLabel(s.answer) : "→ text");
     if (s.thread && s.thread.length) bits.push(`+${s.thread.length} msg`);
     return `${esc(id).toUpperCase()} ${bits.join(" ")}`;
   });
   if (local.vfeedback.length) parts.push(`visual +${local.vfeedback.length} msg`);
+  for (const { id } of typedNotes()) parts.push(`${id === "__visual" ? "visual" : esc(id).toUpperCase()} +1 msg typed`);
   const lp = lastPending();
   const sent = lp ? `<span class="sent"><span class="spin"></span>Sent #${lp.seq} · waiting for the agent</span>` : "";
-  list.innerHTML = locked() ? "This grill is finished." : n ? `<b>${n} staged</b> · ${parts.join(" · ")}${sent ? " · " + sent : ""}` : sent || "Nothing staged. Pick an option or write in the discussion.";
+  const loose = typedAnswers().map((id) => esc(id).toUpperCase());
+  const note = loose.length ? ` <span class="warn" id="unstaged-note">${loose.length > 1 ? "Typed answers on " + loose.join(", ") + " are" : "Typed answer on " + loose[0] + " is"} not staged and will not be sent; press Stage text to include ${loose.length > 1 ? "them" : "it"}.</span>` : "";
+  list.innerHTML = locked() ? "This grill is finished." : (n ? `<b>${n} staged</b> · ${parts.join(" · ")}${sent ? " · " + sent : ""}` : sent || "Nothing staged. Pick an option or write in the discussion.") + note;
   const fa = $("finish-area");
   if (locked()) fa.innerHTML = "";
   else if (isFinishing()) fa.innerHTML = `<button id="finish" type="button" disabled><span class="spin"></span>Finishing…</button>`;
@@ -645,8 +723,24 @@ function renderSend() {
 
 $("send").onclick = send;
 $("intent").onclick = () => { if ($("intent").classList.contains("show")) { intentOpen = !intentOpen; render(); } };
+$("use-subagent").onchange = (e) => { local.subagent = e.target.checked; commit(); };
 $("visualize").onclick = () => { if (hasVisual()) { local.view = activeView() === "visualize" ? "questions" : "visualize"; commit(); } else visualize(); };
 $("terms-toggle").onclick = () => $("terms").classList.toggle("show");
+// ---- theme: data-theme forces light/dark; "system" follows the OS via light-dark() ----
+const THEMES = ["system", "light", "dark"];
+let theme = document.documentElement.dataset.theme || "system";
+const applyTheme = () => {
+  document.documentElement.dataset.theme = theme;
+  const b = $("theme-toggle");
+  b.dataset.mode = theme;
+  b.title = b.ariaLabel = `Theme: ${theme} — click to change`;
+};
+$("theme-toggle").onclick = () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  applyTheme();
+  fetch(withToken("/theme"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ theme }) }).catch(() => {});
+};
+applyTheme();
 document.addEventListener("click", (e) => { if (!e.target.closest("#terms") && !e.target.closest("#terms-toggle")) $("terms").classList.remove("show"); });
 document.addEventListener("keydown", (e) => {
   if (!((e.metaKey || e.ctrlKey) && e.key === "Enter")) return;

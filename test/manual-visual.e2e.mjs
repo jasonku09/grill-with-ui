@@ -72,7 +72,7 @@ try {
   await page.locator("#regen").click();
   await page.waitForFunction(() => document.querySelector("#visual-strip")?.textContent.includes("regenerating"));
   const events = readFileSync(join(session, "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-  assert.deepEqual(events[1].actions, [{ type: "visualize" }], "only the explicit Regenerate click requests a draw");
+  assert.deepEqual(events[1].actions, [{ type: "visualize", subagent: true }], "only the explicit Regenerate click requests a draw");
   assert.equal(events.length, 2);
 
   writeFileSync(join(session, "visual.html"), "<!doctype html><title>Visual fixture</title><p id='content'>Version two</p>");

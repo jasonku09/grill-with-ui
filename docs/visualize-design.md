@@ -98,29 +98,12 @@ finished. He requested that visualization stop auto-regenerating each turn.
   (a prototype cannot read the page's storage or post to `/send`). The page reloads the
   iframe when `visual.version` changes.
 
-- **Who draws the file** (added by Jason after the grill, 2026-09-06): the grill agent
-  never writes `visual.html` in its own session. It classifies the kind, writes a brief
-  (session folder, project root, kind, first cut or the list of what changed), and runs one
-  foreground subagent that reads `visual-brief.md` in the skill folder plus `state.json`,
-  writes the file, and replies with one line the agent copies into the version note. The
-  agent stats the file, bumps the version, and carries on. Rejected: drawing inline (hundreds
-  of lines of markup per version through the interview's context, slowing every later send).
-  Agents without a subagent tool draw the file themselves from the same brief.
-- **Prototype context** (added by Jason after the grill, 2026-09-07): when the topic is an
-  improvement or a feature in an existing app, the prototype is drawn in the context of that
-  app: the real page it lands on, the app's own chrome around it, and its actual styling
-  (tokens, components, type, colour) copied from the codebase, so the frame shows what will
-  ship. Existing parts as they are today, new parts as designed. The wireframe fidelity
-  (neutral palette, no undecided decoration) applies only to a new UI with nothing to match.
-  The interviewer names the landing page or component in the subagent's brief.
-- **Background draws** (added by Jason after the grill, 2026-09-07): the draw subagent runs
-  in the background and the interview continues. The send that requested the draw is
-  handled as soon as the brief is out; the page keeps Send enabled and shows Visualizing…
-  or regenerating… from `visual.drawing` until the subagent's completion notice wakes the
-  agent, which then bumps the version. Decisions made during a draw mark it stale as
-  usual; draw requests made during a draw queue (`visual.queued`) and start the next draw
-  when the current one lands, so two draws never write the same file. Rejected: blocking
-  the interview for the length of a draw (a minute or more per version, many versions).
+- **Who draws the file**: see [Subagent or inline](../SKILL.md#subagent-or-inline) for
+  mode selection and execution. The user-facing toggle is described in [Use](../README.md#use).
+- **Prototype context**: see the [visual brief](../visual-brief.md#the-file) for the
+  fidelity rules for existing apps and new UI.
+- **Background draws**: the draw lifecycle and handling of queued requests are defined in
+  [Visualize](../SKILL.md#visualize).
 
 ## Verified facts
 
@@ -157,16 +140,5 @@ finished. He requested that visualization stop auto-regenerating each turn.
 
 ## State and event additions (for the build)
 
-```jsonc
-// state.json
-"visual": {
-  "kind": "prototype|diagram", "version": 3, "at": "ISO",
-  "note": "v3: discussion panel moved to the right per Q3", "stale": false,
-  "thread": [{ "who": "user|agent", "text": "…", "at": "ISO" }]
-}
-// events.jsonl actions
-{ "type": "visualize" }                       // immediate: first click, or "regenerate now"
-{ "type": "visual-feedback", "text": "…" }    // staged, ships with Send
-```
-
-The file is `<session>/visual.html`; `finished.visual` records the copied path after Finish.
+See the [state and event reference](../SKILL.md#statejson) and
+[Subagent or inline](../SKILL.md#subagent-or-inline) for draw-request handling.

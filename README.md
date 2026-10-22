@@ -64,9 +64,8 @@ What the agent needs at run time:
   active in the foreground. It returns on the next Send or after a bounded timeout, then
   loops. The agent keeps listening after replies and completed visuals, until the user
   finishes or explicitly pauses; a running server is not a substitute for that listener.
-- **Optionally a subagent tool**, for Visualize. With one, the visual is drawn in the
-  background while you keep answering. Without one, the agent draws it inline and that
-  turn takes longer.
+- **Optionally a subagent tool**, for Visualize. See [Use](#use) for the drawing modes;
+  without a subagent tool, the agent draws inline.
 
 ## Use
 
@@ -77,9 +76,15 @@ In any project:
 ```
 
 The agent prints a URL. Open it. Answer by clicking an option (the recommended one is
-outlined) or writing free text; start a discussion in the right-hand panel; use **Defer** and **Reopen** on a card when
-you want to. Everything you do is staged (and survives a reload) until you press **Send N to
-Agent** (⌘↩). The one exception is **Explore deeper** next to a question's title: it goes to
+outlined) or writing free text. A card marked "Pick one or more" takes any number of
+options, and each click toggles one. Start a discussion in the right-hand panel; use **Defer** and **Reopen** on a card when
+you want to. Staged actions and typed drafts survive a reload. **Send N to Agent** (⌘↩)
+ships staged actions together with text left in any question's discussion or the visual
+feedback box, including questions you navigated away from. These notes count toward the
+Send total and can enable Send on their own; sending clears their boxes. A free-text answer
+is sent only once staged (**Stage text**, or ⌘↩ in its box): until then it stays in its box,
+does not count toward Send, and the footer names the question in a warning. If sending fails, carried notes remain
+staged and removable. **Explore deeper** next to a question's title goes to
 the agent the moment you click it, and the pros and cons table for that question's options
 appears in the discussion panel when the agent is done. The agent answers
 threads, writes the tables, records your answers, and adds the next round of questions to
@@ -95,16 +100,22 @@ redraws it; a note that contradicts an answered question reopens that question r
 silently changing your answer. Ordinary answers and question discussions do not regenerate
 the visual or delay the next round. When decisions change what it shows, it is marked
 **Out of date**; click **Regenerate** to include the latest decisions. Each requested redraw
-has a version number and a one-line change note. The agent never writes the file in the
-grill conversation itself: it briefs a subagent (rules in `visual-brief.md`) so hundreds of
-lines of markup stay out of the interview's context. The draw runs in the background, so
-Send keeps working and the interview goes on while it is drawn; the header says
-Visualizing… (or the strip says regenerating…) until the new version lands. Finish
-reconciles and copies the final visual next to the design doc as
+has a version number and a one-line change note. **Use subagent** is checked by default:
+the agent briefs a subagent so hundreds of lines of markup stay out of the interview's
+context. The draw runs in the background, so Send keeps working and the interview goes
+on while it is drawn; the header says
+Visualizing… (or the strip says regenerating…) until the new version lands. Once the
+grilling is done, untick **Use subagent** beside Visualize: the agent then draws inline in
+its own turn, which is faster, at the cost of the markup landing in its context and Send
+waiting until the draw is done. The choice is remembered per grill across reloads and
+is read when the request is sent, including for staged feedback. It applies to Visualize,
+Regenerate, feedback, and Finish reconciliation when a visual exists.
+The checkbox hides when the grill is finished. Finish reconciles and copies the final
+visual next to the design doc as
 `docs/<topic>-visual.html`.
 
-**Finish grill** sends at once (after an inline confirm), together with anything you had
-staged; the agent writes the design doc to the path shown in the header (default
+**Finish grill** sends at once (after an inline confirm), including the same pending items
+as Send; the agent writes the design doc to the path shown in the header (default
 `docs/<topic>-design.md` in your project) and stops.
 
 To pick up an unfinished grill, in the same project:
@@ -121,11 +132,13 @@ and the page tab you still have open reconnects on its own.
 Session state lives outside your repo, so there is nothing to gitignore:
 
 ```
-~/.grill-with-ui/sessions/<project-key>/<YYYYMMDD-HHMMSS>/
-  state.json     written only by the agent, through `patch` (questions, recommendations, threads, status)
-  events.jsonl   appended only by the page, one line per Send
-  server.json    url, port and pid of the running server
-  visual.html    the prototype or diagram, drawn by the agent's subagent, served at /visual
+~/.grill-with-ui/
+  ui.json        global UI prefs shared by every grill (theme)
+  sessions/<project-key>/<YYYYMMDD-HHMMSS>/
+    state.json     written only by the agent, through `patch` (questions, recommendations, threads, status)
+    events.jsonl   appended only by the page, one line per Send
+    server.json    url, port and pid of the running server
+    visual.html    the prototype or diagram, served at /visual
 ```
 
 `<project-key>` is the git common root of the project with slashes turned into dashes, so
@@ -172,9 +185,12 @@ state.
 ```sh
 node --test test/server.test.mjs
 PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/page.e2e.mjs
+PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/subagent-toggle.e2e.mjs
 ```
 
 The page check needs Playwright with Chromium; point `PLAYWRIGHT_PKG` at an existing install
 or run it with `@playwright/test` installed next to the repo. It starts a real server on a
 throwaway session and drives the page end to end (staging, reload, send, working state,
 server restart, finished state).
+The focused toggle check covers both drawing modes, the choice at Send time, and per-grill
+persistence. Set `GRILL_EVIDENCE_DIR` to save screenshots and sent events from either check.
