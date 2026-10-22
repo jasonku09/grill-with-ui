@@ -233,6 +233,8 @@ decisions in order:
 - Every question has a `title`, a `body` that states what hangs on it, lettered `options`
   (two to four), and `rec` with the recommended option and a one-paragraph `why` that names
   the trade-off. A question with no sensible options has `options: []` and `rec.text`.
+- The page renders inline markdown only: bold, italics, `code`, and http(s) links. Block
+  markdown (lists, tables, headings, code blocks) shows as raw text, so write prose.
 - When the options do not exclude each other and the user may want any mix of them (which
   channels to support, which checks to run, which roles get access), set `multi: true` and
   recommend a set: `rec.options: ["A","C"]` instead of `rec.option`. The page lets the user

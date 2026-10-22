@@ -24,7 +24,7 @@ const fixture = () => ({
   agent: { status: "waiting", since: now, handled: 0 },
   terms: [{ term: "Send", def: "One press of Send to Agent.", avoid: ["submit", "reply"] }],
   questions: [
-    { id: "q1", round: 1, deps: [], title: "Root question", body: "Answered earlier.", options: [{ k: "A", text: "First" }, { k: "B", text: "Second" }], rec: { option: "A", why: "Because." }, status: "answered", durable: true, updated: false, answer: { kind: "option", option: "B" }, thread: [{ who: "user", text: "Why not B?", at: now }, { who: "agent", text: "B is fine too.", at: now }] },
+    { id: "q1", round: 1, deps: [], title: "Root question", body: "Answered earlier. Retries go through `retry_queue`; see [the guide](https://example.com/guide), not [the visual](/visual) or [elsewhere](//evil.example).", options: [{ k: "A", text: "First" }, { k: "B", text: "Second" }], rec: { option: "A", why: "Because." }, status: "answered", durable: true, updated: false, answer: { kind: "option", option: "B" }, thread: [{ who: "user", text: "Why not B?", at: now }, { who: "agent", text: "B is fine too.", at: now }] },
     { id: "q2", round: 2, deps: ["q1"], title: "Deferred one", body: "Parked.", options: [{ k: "A", text: "Yes" }], rec: { option: "A", why: "Sure." }, status: "deferred", durable: false, updated: false, thread: [] },
     { id: "q3", round: 3, deps: ["q1"], title: "Current open question", body: "Pick one.", options: [{ k: "A", text: "Alpha" }, { k: "B", text: "Beta" }, { k: "C", text: "Gamma" }], rec: { option: "B", why: "Beta balances both." }, status: "open", durable: false, updated: true, thread: [] },
     { id: "q4", round: 3, deps: ["q2"], title: "Free-text question", body: "No options here.", options: [], rec: { text: "Something short", why: "Keeps it simple." }, status: "open", durable: false, updated: false, thread: [] },
@@ -129,6 +129,12 @@ try {
   await page.locator(".item", { hasText: "Q1" }).click();
   let cr = await readable([".opt.chosen .check path", "stroke"], [".opt.chosen .check circle", "fill"], 3);
   check("theme: the tick on a chosen option stands out from its circle in both themes", cr.ok, cr.extra);
+  // inline markdown (issue #9): code spans read in both themes, only absolute http(s) links render
+  cr = await readable([".card .body code", "color"], [".card .body code", "backgroundColor"], 4.5);
+  check("markdown: code spans are readable in both themes", await page.locator(".card .body code").count() === 1 && cr.ok, cr.extra);
+  const mdLinks = await page.locator(".card .body a").evaluateAll((as) => as.map((a) => [a.getAttribute("href"), a.target, a.rel]));
+  check("markdown: only the absolute https link renders, opening a new tab", JSON.stringify(mdLinks) === JSON.stringify([["https://example.com/guide", "_blank", "noopener noreferrer"]]), JSON.stringify(mdLinks));
+  check("markdown: relative and protocol-relative links stay plain text", (await page.locator(".card .body").textContent()).includes("[the visual](/visual) or [elsewhere](//evil.example)"));
   await page.locator(".item", { hasText: "Q3" }).click();
 
   await page.locator(".opt.rec").click();
